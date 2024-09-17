@@ -29,11 +29,11 @@ raw_vehicle_data <- read_csv("Claim_Fraud_data_Vehicle.csv")
 ## Exploratory Data Analysis
 #########################################################
 ## Just trying to view each dataset directly
-raw_claims_data
-raw_assessment_data
-raw_driver_data
-raw_policy_data
-raw_vehicle_data
+raw_claims_data %>% View()
+raw_assessment_data %>% View()
+raw_driver_data %>% View()
+raw_policy_data %>% View()
+raw_vehicle_data %>% View()
 
 
 
