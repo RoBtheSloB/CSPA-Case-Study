@@ -199,6 +199,16 @@ combined_data <- combined_data %>%
 
 ## At some point can come back to the "make" field and classify the brands as Luxury, etc...
 
+combined_data %>% 
+  select(claim_notes) %>% 
+  separate_wider_delim(claim_notes 
+                       ,delim = "." 
+                       ,names_sep = "_"
+                       ,too_few = "align_start"
+                       ) %>% 
+  View()
+
+
 
 
 
