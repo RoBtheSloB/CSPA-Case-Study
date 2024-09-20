@@ -135,16 +135,69 @@ unique_vehicle_data <- raw_vehicle_data %>%
 ### Could just keep the unique statements ... going to keep as-is 
 ### just to show the work behind finding the need for "unique"
 
-##
+## Combining all the datasets together
+combined_data <- unique_claims_data %>% 
+  left_join(unique_policy_data ,by = "policy_id") %>% 
+  left_join(unique_driver_data ,by = "driver_id") %>% 
+  left_join(unique_vehicle_data ,by = "vehicle_id") %>% 
+  select(all_of(colnames(raw_assessment_data)) ,fraud_ind)
 
 
+#########################################################
+## Data Checking & Joining
+#########################################################
+## Taking a look at all the fields
+glimpse(combined_data)
 
+## Going to look at some of the character fields as some appear inconsistent
+combined_data %>% 
+  count(gender)
+  
+combined_data %>% 
+  count(education)
 
+combined_data %>% 
+  count(limits)
 
+combined_data %>% 
+  count(make)
 
+combined_data %>% 
+  count(model)
 
+combined_data %>% 
+  count(marital_status)
 
+combined_data %>% 
+  count(seat_belt)
 
+combined_data %>% 
+  count(income)
+
+## Fixing the inconsistent character fields
+combined_data <- combined_data %>% 
+  mutate(gender_new          = case_when(gender %in% c('Boy' ,'M' ,'Male') ~ 'Male'
+                                         ,gender %in% c('F' ,'Female' ,'Girl') ~ 'Female') %>% 
+                                  factor(levels = c('Male' ,'Female'))
+         ,education_new      = factor(education ,levels = c('Some High School' ,'High School or GED'
+                                                            ,'Bachelors' ,'Masters' ,'Doctorate'))
+         ,limits_new         = str_replace_all(limits ,pattern = "k" ,replacement = "000") %>% 
+                                  str_replace_all(pattern = "000$" ,replacement = "k") %>% 
+                                  factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"250k" ,"500k"))
+         ,marital_status_new = case_when(marital_status %in% c('M' ,'Marr' ,'Married') ~ 'Married'
+                                         ,marital_status %in% c('S' ,'Single') ~ 'Single') %>% 
+                                  as.factor()
+         ,seat_belt_new      = seat_belt %>%
+                                  factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
+                                                    ,'Unknown'))
+         ,income_new         = case_when(income %in% c('Mid' ,'Middle') ~ 'Middle'
+                                         ,income %in% c('Working' ,'Wrk') ~ 'Working'
+                                         ,TRUE ~ income) %>% 
+                                  factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
+                                  
+         ) 
+
+## At some point can come back to the "make" field and classify the brands as Luxury, etc...
 
 
 
