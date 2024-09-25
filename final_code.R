@@ -208,19 +208,27 @@ combined_data %>%
 
 ## ... honestly a higher amount than I was expecting: ~16%
 
+#########################################################
+## Claim Notes
+#########################################################
 ## Digging into the claim notes to try to text mine/find predictive phrases
 ## Going to separate the notes by sentence
-claim_notes_testing <- combined_data %>% 
-  select(claim_id ,claim_notes ,fraud_ind) %>% 
+separated_claim_data <- combined_data %>% 
+  select(claim_id ,claim_notes) %>% 
   separate_wider_delim(claim_notes 
                        ,delim = "." 
                        ,names_sep = "_"
                        ,too_few = "align_start"
                        ) %>% 
-  mutate_at(vars(contains("claim_notes")) ,str_trim)
+  mutate_at(vars(contains("claim_notes")) ,str_trim) %>% 
+  mutate_at(vars(contains("claim_notes")) ,function(x) {if_else(x == "" ,NA ,x)})
+  
+## Joining the notes back onto the original dataset
+combined_data <- combined_data %>% 
+  left_join(separated_claim_data ,by = "claim_id")
 
 ## A lot of the phrases/formats used actually do seem pretty consistent
-claim_notes_testing %>% 
+combined_data %>% 
   group_by(claim_notes_1) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -231,7 +239,7 @@ claim_notes_testing %>%
 ## The notes are also fairly consistent
 ## For claim_notes_1 can probably extract the intro phrase, vehicle (and make sure it matches)
 ## vehicle/object that was collided with, and then where it occurred
-claim_notes_testing %>% 
+combined_data %>% 
   group_by(claim_notes_2) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -242,7 +250,7 @@ claim_notes_testing %>%
 ## For claim notes 2, this is useful to tell the severity of the injury
 ## Would likely be good to cross this with the incurred amount to see if they are inconsistent
 ## i.e. a small injury with a large loss amt
-claim_notes_testing %>% 
+combined_data %>% 
   group_by(claim_notes_3) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -252,7 +260,7 @@ claim_notes_testing %>%
 
 ## For claim notes 3, this is useful as it has some thoughts around fraud
 ## Also has more info on injury severity and police report status
-claim_notes_testing %>% 
+combined_data %>% 
   group_by(claim_notes_4) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -262,7 +270,7 @@ claim_notes_testing %>%
 
 
 ## Claim notes 4 has more information on the fraud, lots of blanks
-claim_notes_testing %>% 
+combined_data %>% 
   group_by(claim_notes_5) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -271,7 +279,7 @@ claim_notes_testing %>%
   View()
 
 ## More fraud info in claim_notes_5
-claim_notes_testing %>% 
+combined_data %>% 
   group_by(claim_notes_6) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -280,6 +288,35 @@ claim_notes_testing %>%
   View()
 
 ## All blanks for claim_notes_6 - can probably just be discarded
+
+## Going to start with breaking down each of the claim notes
+combined_data %>% 
+  # select(claim_notes_1) %>% 
+  mutate(note_type_1     = str_sub(claim_notes_1
+                                   ,end = str_locate(claim_notes_1 ,pattern = ":")[,1])
+         ,note_vehicle_1 = str_extract(claim_notes_1
+                                       ,pattern = "\\(.*\\)") %>% 
+                              str_remove_all(pattern = "\\(|\\)") %>% 
+                              str_trim()
+         ) %>% 
+  group_by(note_vehicle_1) %>% 
+  summarise(n          = n()
+            ,fraud_ind = sum(fraud_ind)
+            ,fraud_pct = fraud_ind / n) %>% 
+  arrange(desc(n)) %>% 
+  View()
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
