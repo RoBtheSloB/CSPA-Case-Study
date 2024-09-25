@@ -298,7 +298,11 @@ combined_data %>%
                                        ,pattern = "\\(.*\\)") %>% 
                               str_remove_all(pattern = "\\(|\\)") %>% 
                               str_trim()
+         ,testing_1      = str_locate_all(claim_notes_1
+                                          ,pattern = "\\(")
          ) %>% 
+  select(claim_notes ,note_vehicle_1 ,testing_1) %>% 
+  View()
   group_by(note_vehicle_1) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -308,9 +312,15 @@ combined_data %>%
 
 
 
+test_phrase <- c("Claim Adjuster's Memo: Vehicle 1 ( Toyota Camry ) sideswiped Vehicle 2 (gray sedan) while merging. Mo"
+                 ,"djuster's Report: Collision: Vehicle 1 ( Ford F-150 ) rear-ended Vehicle 2 (black SUV) in heavy traffic. Moderate damage.")
 
-
-
+test_phrase %>% 
+  str_locate(pattern = "\\(")
+  str_extract(pattern = "\\(.*\\)") %>%
+  
+  str_remove_all(pattern = "\\(|\\)") %>% 
+  str_trim()
 
 
 
