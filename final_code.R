@@ -290,7 +290,7 @@ combined_data %>%
 ## All blanks for claim_notes_6 - can probably just be discarded
 
 ## Going to start with breaking down each of the claim notes
-combined_data %>% 
+combined_data <- combined_data %>% 
   # select(claim_notes_1) %>% 
   mutate(note_type_1            = str_sub(claim_notes_1
                                           ,end = str_locate(claim_notes_1 ,pattern = ":")[,1])
@@ -300,6 +300,10 @@ combined_data %>%
                                           ) %>% 
                                      str_remove_all(pattern = "\\(|\\)") %>% 
                                      str_trim()
+         ,fraud_ind_1           = str_extract(note_type_1 %>% 
+                                                str_replace(pattern = "Frauuuuud" ,replacement = "Fraud") %>% 
+                                                tolower()
+                                              ,pattern = "fraud\\s*(\\S+)")
          ,pedestrian_2_flag     = str_extract(claim_notes_2 %>% tolower()
                                               ,pattern = "cyclist|pedestrian") %>% 
                                      coalesce("Other")
@@ -307,12 +311,18 @@ combined_data %>%
                                               ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries")
          ,injury_level_2        = str_extract(claim_notes_2 %>% tolower() 
                                               ,pattern = "(\\S+)\\s*(?=damage)|(\\S+)\\s*(?=injuries)")
+         ,injury_vs_damage_2    = str_extract(claim_notes_2 %>% tolower() 
+                                              ,pattern = "damage|injuries")
          ,fraud_ind_2           = str_extract(claim_notes_2 %>% 
                                                 tolower() %>% 
                                                 str_replace(pattern = "frauuuuud" ,replacement = "fraud")
                                               ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud")
          ,injury_type_3         = str_extract(claim_notes_3 %>% tolower() 
                                               ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries|injuries reported")
+         ,injury_level_3        = str_extract(claim_notes_3 %>% tolower() 
+                                              ,pattern = "(\\S+)\\s*(?=damage)|(\\S+)\\s*(?=injuries)")
+         ,injury_vs_damage_3    = str_extract(claim_notes_3 %>% tolower() 
+                                              ,pattern = "damage|injuries")         
          ,police_type_3         = str_extract(claim_notes_3 %>% tolower() 
                                               ,pattern = "police and medical assistance|police\\s*(\\S+)")
          ,triple_exclamation_3  = as.numeric(str_detect(claim_notes_3 ,pattern = "^!!!$"))
@@ -340,25 +350,22 @@ combined_data %>%
                                      str_replace(pattern = "Frauuuuud" ,replacement = "Fraud")
          ,vehicle_mismatch_flag = as.numeric(str_c(make ," " ,model) != note_vehicle_1)
          ,pedestrian_type       = pedestrian_2_flag
+         ,injury_type           = if_else(!is.na(injury_type_2) & !is.na(injury_type_3)
+                                          ,str_c(injury_type_2 ," and " ,injury_type_3)
+                                          ,coalesce(injury_type_2 ,injury_type_3))
+         ,police_type           = coalesce(police_type_3 ,police_type_4)
+         ,alcohol_or_drugs      = coalesce(alcohol_or_drugs_4 ,alcohol_or_drugs_5)
+         ,triple_exclamation    = coalesce(triple_exclamation_3 ,triple_exclamation_4 ,triple_exclamation_5)
+         ,fraud_note_ind        = if_else(!is.na(fraud_ind_1) & !is.na(fraud_ind_2) 
+                                          ,str_c(fraud_ind_1 ," " ,fraud_ind_2)
+                                          ,coalesce(fraud_ind_1 ,fraud_ind_2 ,fraud_ind_3 ,fraud_ind_4 ,fraud_ind_5)
+                                          )
          ) %>% 
-  group_by(injury_type_2) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n) %>% 
-  arrange(desc(n)) %>% 
-  View()
+  select(-matches("_[0-9]"))
 
 
 
-test_phrase <- c("Pedestrian suffered minor injuries"
-                 ,"Minor damage to both vehicles")
 
-test_phrase %>% 
-  enframe() %>% 
-  mutate(testing = str_extract(value %>% tolower() 
-                               ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries"))
-
-?str_locate
 
   
   
