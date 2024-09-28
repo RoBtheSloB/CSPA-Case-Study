@@ -292,18 +292,56 @@ combined_data %>%
 ## Going to start with breaking down each of the claim notes
 combined_data %>% 
   # select(claim_notes_1) %>% 
-  mutate(note_type_1     = str_sub(claim_notes_1
-                                   ,end = str_locate(claim_notes_1 ,pattern = ":")[,1])
-         ,note_vehicle_1 = str_extract(claim_notes_1
-                                       ,pattern = "\\(.*\\)") %>% 
-                              str_remove_all(pattern = "\\(|\\)") %>% 
-                              str_trim()
-         ,testing_1      = str_locate_all(claim_notes_1
-                                          ,pattern = "\\(")
+  mutate(note_type_1            = str_sub(claim_notes_1
+                                          ,end = str_locate(claim_notes_1 ,pattern = ":")[,1])
+         ,note_vehicle_1        = str_sub(claim_notes_1
+                                          ,start = str_locate(claim_notes_1 ,pattern = "\\(")[,"start"]
+                                          ,end = str_locate(claim_notes_1 ,pattern = "\\)")[,"start"]
+                                          ) %>% 
+                                     str_remove_all(pattern = "\\(|\\)") %>% 
+                                     str_trim()
+         ,pedestrian_2_flag     = str_extract(claim_notes_2 %>% tolower()
+                                              ,pattern = "cyclist|pedestrian") %>% 
+                                     coalesce("Other")
+         ,injury_type_2         = str_extract(claim_notes_2 %>% tolower() 
+                                              ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries")
+         ,injury_level_2        = str_extract(claim_notes_2 %>% tolower() 
+                                              ,pattern = "(\\S+)\\s*(?=damage)|(\\S+)\\s*(?=injuries)")
+         ,fraud_ind_2           = str_extract(claim_notes_2 %>% 
+                                                tolower() %>% 
+                                                str_replace(pattern = "frauuuuud" ,replacement = "fraud")
+                                              ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud")
+         ,injury_type_3         = str_extract(claim_notes_3 %>% tolower() 
+                                              ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries|injuries reported")
+         ,police_type_3         = str_extract(claim_notes_3 %>% tolower() 
+                                              ,pattern = "police and medical assistance|police\\s*(\\S+)")
+         ,triple_exclamation_3  = as.numeric(str_detect(claim_notes_3 ,pattern = "^!!!$"))
+         ,fraud_ind_3           = str_extract(claim_notes_3 %>% 
+                                                tolower() %>% 
+                                                str_replace(pattern = "frauuuuud" ,replacement = "fraud")
+                                              ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud")
+         ,police_type_4         = str_extract(claim_notes_4 %>% tolower() 
+                                              ,pattern = "police and medical assistance|police\\s*(\\S+)|officer on site")
+         ,alcohol_or_drugs_4    = str_extract(claim_notes_4 %>% tolower()
+                                              ,pattern = "alcohol or drugs suspected")
+         ,triple_exclamation_4  = as.numeric(str_detect(claim_notes_4 ,pattern = "^!!!$"))
+         ,fraud_ind_4           = str_extract(claim_notes_4 %>% 
+                                                tolower() %>% 
+                                                str_replace(pattern = "frauuuuud" ,replacement = "fraud")
+                                              ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud|no signs of fraud")
+         ,alcohol_or_drugs_5    = str_extract(claim_notes_5 %>% tolower()
+                                              ,pattern = "alcohol or drugs suspected")
+         ,triple_exclamation_5  = as.numeric(str_detect(claim_notes_5 ,pattern = "^!!!$"))
+         ,fraud_ind_5           = str_extract(claim_notes_5 %>% 
+                                                tolower() %>% 
+                                                str_replace(pattern = "frauuuuud" ,replacement = "fraud")
+                                              ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud|no signs of fraud")
+         ,note_type             = note_type_1 %>% 
+                                     str_replace(pattern = "Frauuuuud" ,replacement = "Fraud")
+         ,vehicle_mismatch_flag = as.numeric(str_c(make ," " ,model) != note_vehicle_1)
+         ,pedestrian_type       = pedestrian_2_flag
          ) %>% 
-  select(claim_notes ,note_vehicle_1 ,testing_1) %>% 
-  View()
-  group_by(note_vehicle_1) %>% 
+  group_by(injury_type_2) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
             ,fraud_pct = fraud_ind / n) %>% 
@@ -312,17 +350,18 @@ combined_data %>%
 
 
 
-test_phrase <- c("Claim Adjuster's Memo: Vehicle 1 ( Toyota Camry ) sideswiped Vehicle 2 (gray sedan) while merging. Mo"
-                 ,"djuster's Report: Collision: Vehicle 1 ( Ford F-150 ) rear-ended Vehicle 2 (black SUV) in heavy traffic. Moderate damage.")
+test_phrase <- c("Pedestrian suffered minor injuries"
+                 ,"Minor damage to both vehicles")
 
 test_phrase %>% 
-  str_locate(pattern = "\\(")
-  str_extract(pattern = "\\(.*\\)") %>%
+  enframe() %>% 
+  mutate(testing = str_extract(value %>% tolower() 
+                               ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries"))
+
+?str_locate
+
   
-  str_remove_all(pattern = "\\(|\\)") %>% 
-  str_trim()
-
-
+  
 
 
 
