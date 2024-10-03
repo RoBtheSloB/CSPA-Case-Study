@@ -194,7 +194,6 @@ combined_data <- combined_data %>%
                                          ,income %in% c('Working' ,'Wrk') ~ 'Working'
                                          ,TRUE ~ income) %>% 
                                   factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
-                                  
          ) 
 
 ## At some point can come back to the "make" field and classify the brands as Luxury, etc...
@@ -364,9 +363,20 @@ combined_data <- combined_data %>%
   select(-matches("_[0-9]"))
 
 
+#########################################################
+## Model Building
+#########################################################
+## Adding some additional variables before the modeling
+combined_data <- combined_data %>% 
+  mutate(acc_minus_eff_date = accident_date - policy_orig_eff_date)
+
+## Get the variables I'm interested in using for modeling purposes
+model_vars <- colnames(combined_data) %>% 
+  enframe(name = NULL) %>% 
+  filter(!str_detect(value ,pattern = "_id$"))
 
 
-
+combined_data %>% 
   
   
 
