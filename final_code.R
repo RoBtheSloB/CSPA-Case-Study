@@ -462,13 +462,14 @@ check_fraud_pct_num2("claim_greater_than_limit") ## Predictive of fraud if claim
 
 
 
+## Numeric variables that are missing:
+## 1) Cell_Usage
+## 2) Altitude
+## 3) Foggy_Days
+## 4) Braking_Mile
+## 5) Left_Mile
 
-combined_data %>% 
-  mutate(testing = claimamount > limits_numeric) %>% 
-  group_by(testing) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n)
+
   
 
 #########################################################
