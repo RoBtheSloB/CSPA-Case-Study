@@ -148,74 +148,6 @@ combined_data <- unique_claims_data %>%
 
 
 #########################################################
-## Data Checking & Joining
-#########################################################
-## Taking a look at all the fields
-glimpse(combined_data)
-
-## Going to look at some of the character fields as some appear inconsistent
-combined_data %>% 
-  count(gender)
-  
-combined_data %>% 
-  count(education)
-
-combined_data %>% 
-  count(limits)
-
-combined_data %>% 
-  count(make)
-
-combined_data %>% 
-  count(model)
-
-combined_data %>% 
-  count(marital_status)
-
-combined_data %>% 
-  count(seat_belt)
-
-combined_data %>% 
-  count(income)
-
-## Fixing the inconsistent character fields
-combined_data <- combined_data %>% 
-  mutate(gender_new                = case_when(gender %in% c('Boy' ,'M' ,'Male') ~ 'Male'
-                                               ,gender %in% c('F' ,'Female' ,'Girl') ~ 'Female') %>% 
-                                        factor(levels = c('Male' ,'Female'))
-         ,education_new            = factor(education ,levels = c('Some High School' ,'High School or GED'
-                                                                  ,'Bachelors' ,'Masters' ,'Doctorate'))
-         ,limits_new               = str_replace_all(limits ,pattern = "k" ,replacement = "000") %>% 
-                                        str_replace_all(pattern = "000$" ,replacement = "k") %>% 
-                                        factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"200k" ,"250k" ,"300k" ,"500k"))
-         ,limits_numeric           = limits_new %>% 
-                                        str_replace(pattern = "k" ,replacement = "000") %>% 
-                                        as.numeric()
-         ,marital_status_new       = case_when(marital_status %in% c('M' ,'Marr' ,'Married') ~ 'Married'
-                                               ,marital_status %in% c('S' ,'Single') ~ 'Single') %>% 
-                                        as.factor()
-         ,seat_belt_new            = seat_belt %>%
-                                        factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
-                                                          ,'Unknown'))
-         ,income_new               = case_when(income %in% c('Mid' ,'Middle') ~ 'Middle'
-                                               ,income %in% c('Working' ,'Wrk') ~ 'Working'
-                                               ,TRUE ~ income) %>% 
-                                        factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
-         ,claim_greater_than_limit = as.numeric(claimamount > limits_numeric)
-         ) 
-
-## At some point may want to come back to the "make" field and classify the brands as Luxury, etc...
-
-## Want to understand what percent of claims are actually fraudulent
-combined_data %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n
-            ) 
-
-## ... honestly a higher amount than I was expecting: ~16%
-
-#########################################################
 ## Claim Notes
 #########################################################
 ## Digging into the claim notes to try to text mine/find predictive phrases
@@ -233,7 +165,6 @@ separated_claim_data <- combined_data %>%
 ## Joining the notes back onto the original dataset
 combined_data <- combined_data %>% 
   left_join(separated_claim_data ,by = "claim_id")
-
 
 ## Going to see how variables are correlated with fraud
 check_fraud_pct <- function(x) {
@@ -290,7 +221,7 @@ combined_data <- combined_data %>%
                                                 str_replace(pattern = "Frauuuuud" ,replacement = "Fraud") %>% 
                                                 tolower()
                                               ,pattern = "fraud\\s*(\\S+)")
-         ,pedestrian_2_flag     = str_extract(claim_notes_2 %>% tolower()
+         ,pedestrian_flag_2     = str_extract(claim_notes_2 %>% tolower()
                                               ,pattern = "cyclist|pedestrian") %>% 
                                      coalesce("Other")
          ,injury_type_2         = str_extract(claim_notes_2 %>% tolower() 
@@ -333,9 +264,9 @@ combined_data <- combined_data %>%
                                                 str_replace(pattern = "frauuuuud" ,replacement = "fraud")
                                               ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud|no signs of fraud")
          ,note_type             = note_type_1 %>% 
-                                     str_replace(pattern = "Frauuuuud" ,replacement = "Fraud")
+                                     str_replace(pattern = "Frauuuuud|frauuuuud" ,replacement = "Fraud")
          ,vehicle_mismatch_flag = as.numeric(str_c(make ," " ,model) != note_vehicle_1)
-         ,pedestrian_type       = pedestrian_2_flag
+         ,pedestrian_type       = pedestrian_flag_2
          ,injury_type           = if_else(!is.na(injury_type_2) & !is.na(injury_type_3)
                                           ,str_c(injury_type_2 ," and " ,injury_type_3)
                                           ,coalesce(injury_type_2 ,injury_type_3))
@@ -352,7 +283,7 @@ combined_data <- combined_data %>%
                                           ) %>% 
                                      factor(levels = c('no signs of fraud' ,'probably not fraud' ,'suspected fraud' ,'fraud'))
          ) %>% 
-  select(-matches("_[0-9]"))
+  select(-matches("_[0-9]$"))
 
 
 check_fraud_pct("note_type") ## Potentially useful ... although may be duplicative with fraud_note_ind
@@ -365,15 +296,15 @@ check_fraud_pct("triple_exclamation") ## Extremely predictive ... although few d
 check_fraud_pct("fraud_note_ind") ## Extremely predictive ... although few data points
 check_fraud_pct("claim_greater_than_limit") ## Seems potentially helpful
 
-## Thought there would be instances where the claim notes vehicle doesn't match
-## Turns out there aren't and it's not predictive --> remove column
+## Thought there would be instances where the claim notes vehicle doesn't match (which could indicate fraud)
+## Turns out there aren't  --> remove column
 combined_data <- combined_data %>% 
   select(-vehicle_mismatch_flag)
 
 #########################################################
-## Exploratory Data Analysis
+## Exploratory Data Analysis - Numeric Columns
 #########################################################
-## Looking for missing values in the fields
+## Looking for missing values in the numeric fields
 combined_data %>% 
   select_if(is.numeric) %>% 
   summary()
@@ -401,14 +332,6 @@ check_fraud_pct_num2 <- function(x) {
               ,fraud_ind = sum(fraud_ind)
               ,fraud_pct = fraud_ind / n)
 } 
-
-combined_data %>% 
-  mutate(band = as.numeric(credit_score > 1)) %>% 
-  filter(!is.na(band)) %>% 
-  group_by(band) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n)
 
 ## Checking the numeric cols
 ## Ones where I'm using function 2 should be considered for becoming factors
@@ -461,7 +384,6 @@ check_fraud_pct_num2("limits_numeric") ## Higher limits tend to have much less f
 check_fraud_pct_num2("claim_greater_than_limit") ## Predictive of fraud if claim > limit
 
 
-
 ## Numeric variables that are missing:
 ## 1) Cell_Usage
 ## 2) Altitude
@@ -470,7 +392,111 @@ check_fraud_pct_num2("claim_greater_than_limit") ## Predictive of fraud if claim
 ## 5) Left_Mile
 
 
-  
+## Fixing the columns that were identified as having issues above
+combined_data <- combined_data %>% 
+  mutate(num_drivers_new      = na_if(num_drivers ,17)
+         ,clms_flt1_new       = na_if(clms_flt1 ,17)
+         ,late_90d_new        = na_if(late_90d ,500)
+         ,outs_bal_new        = na_if(outs_bal ,99)
+         ,viol_mjr2_new       = na_if(viol_mjr2 ,17)
+         ,time_bet10pm2am_new = na_if(time_bet10pm2am ,0.75)
+         ,credit_score_new    = na_if(credit_score ,1.5)
+         ,report_lag_new      = na_if(report_lag ,99)
+         )
+
+
+#########################################################
+## Exploratory Data Analysis - Character Columns
+#########################################################
+## Looking at the character fields
+combined_data %>% 
+  select_if(is.character) %>% 
+  summarise(across(everything(), ~ sum(is.na(.x)))) %>% 
+  pivot_longer(policy_id:alcohol_or_drugs) %>% 
+  rename(n = value)
+
+## Checking their relationships to fraud
+check_fraud_pct_num2("gender") ## Need to fix these fields
+check_fraud_pct_num2("education") ## Seems predictive --> should convert to factor
+check_fraud_pct_num2("limits") ## Need to fix the inconsistencies
+check_fraud_pct_num2("make") %>% arrange(desc(n)) %>% View() ## Doesn't feel too predictive
+check_fraud_pct_num2("model") %>% arrange(desc(n)) %>% View() ## Doesn't feel too predictive ... so many lvls
+check_fraud_pct_num2("marital_status") ## Need to fix these fields
+check_fraud_pct_num2("num_cars") ## Need to fix these fields
+check_fraud_pct_num2("seat_belt") ## Doesn't seem too predictive --> should convert to factor anyways
+check_fraud_pct_num2("income") ## Need to fix these fields
+check_fraud_pct_num2("note_type") ## Should condense this field as many aren't useful
+check_fraud_pct_num2("pedestrian_type") ## Doesn't seem too useful
+check_fraud_pct_num2("injury_type") %>% arrange(desc(n)) ## Could be somewhat useful?
+check_fraud_pct_num2("police_type") ## Could be somewhat useful?
+check_fraud_pct_num2("alcohol_or_drugs") ## Could be somewhat useful?
+
+## Fixing the inconsistent character fields
+combined_data <- combined_data %>% 
+  mutate(gender_new                = case_when(gender %in% c('Boy' ,'M' ,'Male') ~ 'Male'
+                                               ,gender %in% c('F' ,'Female' ,'Girl') ~ 'Female') %>% 
+                                        factor(levels = c('Male' ,'Female'))
+         ,education_new            = factor(education ,levels = c('Some High School' ,'High School or GED'
+                                                                  ,'Bachelors' ,'Masters' ,'Doctorate'))
+         ,limits_new               = str_replace_all(limits ,pattern = "k" ,replacement = "000") %>% 
+                                        str_replace_all(pattern = "000$" ,replacement = "k") %>% 
+                                        factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"200k" ,"250k" ,"300k" ,"500k"))
+         ,limits_numeric           = limits_new %>% 
+                                        str_replace(pattern = "k" ,replacement = "000") %>% 
+                                        as.numeric()
+         ,marital_status_new       = case_when(marital_status %in% c('M' ,'Marr' ,'Married') ~ 'Married'
+                                               ,marital_status %in% c('S' ,'Single') ~ 'Single') %>% 
+                                        as.factor()
+         ,num_cars_new             = case_when(num_cars == "Four" ~ "4"
+                                               ,num_cars == "Three" ~ "3"
+                                               ,num_cars == "Two" ~ "2"
+                                               ,TRUE ~ num_cars
+                                               ) %>% 
+                                        as.factor()
+         ,num_cars_band_new        = case_when(num_cars == "1" ~ "1"
+                                               ,TRUE ~ "2+") %>% 
+                                        as.factor()         
+         ,seat_belt_new            = seat_belt %>%
+                                        factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
+                                                          ,'Unknown'))
+         ,income_new               = case_when(income %in% c('Mid' ,'Middle') ~ 'Middle'
+                                               ,income %in% c('Working' ,'Wrk') ~ 'Working'
+                                               ,TRUE ~ income) %>% 
+                                        factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
+         ,note_type_new            = case_when(!(note_type %in% c(":" ,"Fraud Suspected:" ,"Hit-and-run incident:")) ~ "All Other"
+                                               ,TRUE ~ note_type
+                                               ) %>% 
+                                        factor(levels = c(":" ,"All Other" ,"Hit-and-run incident:" ,"Fraud Suspected:"))
+         ,pedestrian_type_new      = pedestrian_type %>% tolower() %>% factor(levels = c("other" ,"cyclist" ,"pedestrian"))
+         ,injury_type_new          = injury_type %>% as.factor()
+         ,police_type_new          = police_type %>% factor(levels = c("officer on site" ,"police report" ,"police and medical assistance"
+                                                                       ,"police notified"))
+         ,alcohol_or_drugs_new     = alcohol_or_drugs %>% as.factor()
+         ,claim_greater_than_limit = as.numeric(claimamount > limits_numeric)
+  ) 
+
+## Confirming the new fields are looking better
+check_fraud_pct_num2("gender_new")
+check_fraud_pct_num2("education_new")
+check_fraud_pct_num2("limits_new")
+check_fraud_pct_num2("marital_status_new")
+check_fraud_pct_num2("num_cars_new")
+check_fraud_pct_num2("num_cars_band_new")
+check_fraud_pct_num2("seat_belt_new")
+check_fraud_pct_num2("income_new")
+check_fraud_pct_num2("pedestrian_type_new")
+check_fraud_pct_num2("injury_type_new")
+check_fraud_pct_num2("police_type_new")
+check_fraud_pct_num2("alcohol_or_drugs_new")
+check_fraud_pct_num2("claim_greater_than_limit")
+
+## Character variables that are missing:
+## 1) Pop_Density
+
+#########################################################
+## Variable Relationships/Bucketing
+#########################################################
+
 
 #########################################################
 ## Model Building
