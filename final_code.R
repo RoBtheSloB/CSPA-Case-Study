@@ -8,6 +8,10 @@ library(knitr)
 library(kableExtra)
 library(RColorBrewer)
 library(rstudioapi)
+library(naniar)
+
+## Turn off scientific notation
+options(scipen = 999)
 
 
 #########################################################
@@ -176,27 +180,31 @@ combined_data %>%
 
 ## Fixing the inconsistent character fields
 combined_data <- combined_data %>% 
-  mutate(gender_new          = case_when(gender %in% c('Boy' ,'M' ,'Male') ~ 'Male'
-                                         ,gender %in% c('F' ,'Female' ,'Girl') ~ 'Female') %>% 
-                                  factor(levels = c('Male' ,'Female'))
-         ,education_new      = factor(education ,levels = c('Some High School' ,'High School or GED'
-                                                            ,'Bachelors' ,'Masters' ,'Doctorate'))
-         ,limits_new         = str_replace_all(limits ,pattern = "k" ,replacement = "000") %>% 
-                                  str_replace_all(pattern = "000$" ,replacement = "k") %>% 
-                                  factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"250k" ,"500k"))
-         ,marital_status_new = case_when(marital_status %in% c('M' ,'Marr' ,'Married') ~ 'Married'
-                                         ,marital_status %in% c('S' ,'Single') ~ 'Single') %>% 
-                                  as.factor()
-         ,seat_belt_new      = seat_belt %>%
-                                  factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
-                                                    ,'Unknown'))
-         ,income_new         = case_when(income %in% c('Mid' ,'Middle') ~ 'Middle'
-                                         ,income %in% c('Working' ,'Wrk') ~ 'Working'
-                                         ,TRUE ~ income) %>% 
-                                  factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
+  mutate(gender_new                = case_when(gender %in% c('Boy' ,'M' ,'Male') ~ 'Male'
+                                               ,gender %in% c('F' ,'Female' ,'Girl') ~ 'Female') %>% 
+                                        factor(levels = c('Male' ,'Female'))
+         ,education_new            = factor(education ,levels = c('Some High School' ,'High School or GED'
+                                                                  ,'Bachelors' ,'Masters' ,'Doctorate'))
+         ,limits_new               = str_replace_all(limits ,pattern = "k" ,replacement = "000") %>% 
+                                        str_replace_all(pattern = "000$" ,replacement = "k") %>% 
+                                        factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"200k" ,"250k" ,"300k" ,"500k"))
+         ,limits_numeric           = limits_new %>% 
+                                        str_replace(pattern = "k" ,replacement = "000") %>% 
+                                        as.numeric()
+         ,marital_status_new       = case_when(marital_status %in% c('M' ,'Marr' ,'Married') ~ 'Married'
+                                               ,marital_status %in% c('S' ,'Single') ~ 'Single') %>% 
+                                        as.factor()
+         ,seat_belt_new            = seat_belt %>%
+                                        factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
+                                                          ,'Unknown'))
+         ,income_new               = case_when(income %in% c('Mid' ,'Middle') ~ 'Middle'
+                                               ,income %in% c('Working' ,'Wrk') ~ 'Working'
+                                               ,TRUE ~ income) %>% 
+                                        factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
+         ,claim_greater_than_limit = as.numeric(claimamount > limits_numeric)
          ) 
 
-## At some point can come back to the "make" field and classify the brands as Luxury, etc...
+## At some point may want to come back to the "make" field and classify the brands as Luxury, etc...
 
 ## Want to understand what percent of claims are actually fraudulent
 combined_data %>% 
@@ -226,65 +234,44 @@ separated_claim_data <- combined_data %>%
 combined_data <- combined_data %>% 
   left_join(separated_claim_data ,by = "claim_id")
 
-## A lot of the phrases/formats used actually do seem pretty consistent
-combined_data %>% 
-  group_by(claim_notes_1) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n) %>% 
-  arrange(desc(n)) %>% 
-  View()
 
-## The notes are also fairly consistent
+## Going to see how variables are correlated with fraud
+check_fraud_pct <- function(x) {
+  combined_data %>% 
+    group_by(!!sym(x)) %>% 
+    summarise(n          = n()
+              ,fraud_ind = sum(fraud_ind)
+              ,fraud_pct = fraud_ind / n) %>% 
+    arrange(desc(n))
+}
+
+## A lot of the phrases/formats used actually do seem pretty consistent
+check_fraud_pct("claim_notes_1") %>% View()
+
 ## For claim_notes_1 can probably extract the intro phrase, vehicle (and make sure it matches)
 ## vehicle/object that was collided with, and then where it occurred
-combined_data %>% 
-  group_by(claim_notes_2) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n) %>% 
-  arrange(desc(n)) %>% 
-  View()
+
+check_fraud_pct("claim_notes_2") %>% View()
 
 ## For claim notes 2, this is useful to tell the severity of the injury
 ## Would likely be good to cross this with the incurred amount to see if they are inconsistent
 ## i.e. a small injury with a large loss amt
-combined_data %>% 
-  group_by(claim_notes_3) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n) %>% 
-  arrange(desc(n)) %>% 
-  View()
+
+check_fraud_pct("claim_notes_3") %>% View()
 
 ## For claim notes 3, this is useful as it has some thoughts around fraud
 ## Also has more info on injury severity and police report status
-combined_data %>% 
-  group_by(claim_notes_4) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n) %>% 
-  arrange(desc(n)) %>% 
-  View()
+
+check_fraud_pct("claim_notes_4") %>% View()
 
 
 ## Claim notes 4 has more information on the fraud, lots of blanks
-combined_data %>% 
-  group_by(claim_notes_5) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n) %>% 
-  arrange(desc(n)) %>% 
-  View()
+
+check_fraud_pct("claim_notes_5") %>% View()
 
 ## More fraud info in claim_notes_5
-combined_data %>% 
-  group_by(claim_notes_6) %>% 
-  summarise(n          = n()
-            ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n) %>% 
-  arrange(desc(n)) %>% 
-  View()
+
+check_fraud_pct("claim_notes_6") %>% View()
 
 ## All blanks for claim_notes_6 - can probably just be discarded
 
@@ -359,9 +346,130 @@ combined_data <- combined_data %>%
                                           ,str_c(fraud_ind_1 ," " ,fraud_ind_2)
                                           ,coalesce(fraud_ind_1 ,fraud_ind_2 ,fraud_ind_3 ,fraud_ind_4 ,fraud_ind_5)
                                           )
+         ,fraud_note_ind        = if_else(str_detect(fraud_note_ind ,pattern = "susp")
+                                          ,"suspected fraud"
+                                          ,fraud_note_ind
+                                          ) %>% 
+                                     factor(levels = c('no signs of fraud' ,'probably not fraud' ,'suspected fraud' ,'fraud'))
          ) %>% 
   select(-matches("_[0-9]"))
 
+
+check_fraud_pct("note_type") ## Potentially useful ... although may be duplicative with fraud_note_ind
+check_fraud_pct("vehicle_mismatch_flag") ## Not useful, remove
+check_fraud_pct("pedestrian_type") ## Maybe helpful? Can see if interaction term would help
+check_fraud_pct("injury_type") ## Maybe helpful? Can see if interaction term would help
+check_fraud_pct("police_type") ## Maybe helpful? Can see if interaction term would help
+check_fraud_pct("alcohol_or_drugs") ## Maybe helpful? Can see if interaction term would help
+check_fraud_pct("triple_exclamation") ## Extremely predictive ... although few data points
+check_fraud_pct("fraud_note_ind") ## Extremely predictive ... although few data points
+check_fraud_pct("claim_greater_than_limit") ## Seems potentially helpful
+
+## Thought there would be instances where the claim notes vehicle doesn't match
+## Turns out there aren't and it's not predictive --> remove column
+combined_data <- combined_data %>% 
+  select(-vehicle_mismatch_flag)
+
+#########################################################
+## Exploratory Data Analysis
+#########################################################
+## Looking for missing values in the fields
+combined_data %>% 
+  select_if(is.numeric) %>% 
+  summary()
+
+## Roughly 23 - 38 NA's for most numeric fields
+## No NA's for the Fraud Indicator
+
+## Creating a function to look at the numeric variable bands and their fraud rates
+check_fraud_pct_num <- function(x ,y = 5) {
+  combined_data %>% 
+    mutate(band = cut_number(!!sym(x) ,n = y ,dig.lab=10)) %>% 
+    filter(!is.na(band)) %>% 
+    group_by(band) %>% 
+    summarise(n          = n()
+              ,fraud_ind = sum(fraud_ind)
+              ,fraud_pct = fraud_ind / n)
+}  
+
+## Creating a function to look at the numeric variables directly and their fraud rates
+check_fraud_pct_num2 <- function(x) {
+  combined_data %>% 
+    filter(!is.na(!!sym(x))) %>% 
+    group_by(!!sym(x)) %>% 
+    summarise(n          = n()
+              ,fraud_ind = sum(fraud_ind)
+              ,fraud_pct = fraud_ind / n)
+} 
+
+combined_data %>% 
+  mutate(band = as.numeric(credit_score > 1)) %>% 
+  filter(!is.na(band)) %>% 
+  group_by(band) %>% 
+  summarise(n          = n()
+            ,fraud_ind = sum(fraud_ind)
+            ,fraud_pct = fraud_ind / n)
+
+## Checking the numeric cols
+## Ones where I'm using function 2 should be considered for becoming factors
+check_fraud_pct_num("policy_orig_eff_date") ## pretty stable over time
+check_fraud_pct_num("accident_date") ## very small claims do not seem to be fraudulent usually
+check_fraud_pct_num("claimamount") ## come back to this one ... not working well
+check_fraud_pct_num("age") ## Younger bands seem to more fraudulent
+check_fraud_pct_num("yrs_licensed") ## Earlier bands more fraudulent ... likely correlated with age
+check_fraud_pct_num("hp_vehicle") ## pretty stable
+check_fraud_pct_num("model_year") ## pretty stable
+check_fraud_pct_num2("policy_orig_eff_date") %>% View() ## checking for outliers
+check_fraud_pct_num2("accident_date") %>% View() ## checking for outliers ... lot of claims on 30th of months
+check_fraud_pct_num2("age") %>% View() ## checking for outliers
+check_fraud_pct_num2("yrs_licensed") %>% View() ## checking for outliers
+check_fraud_pct_num2("hp_vehicle") %>% View() ## checking for outliers
+check_fraud_pct_num2("model_year") %>% View()  ## checking for outliers
+check_fraud_pct_num2("num_drivers") ## less drivers seems more fraudulent ... fix those with 17
+check_fraud_pct_num2("clms_flt1") ## Seems very predictive ... 1+ is very fraudulent ... fix those with 17
+check_fraud_pct_num2("clms_flt2") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("clms_flt3") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("clms_flt4") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("clms_flt5") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("clms_naf1") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("clms_naf2") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("clms_naf3") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("clms_naf4") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("clms_naf5") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num("late_90d") ## More late --> more fraudulent
+check_fraud_pct_num2("late_90d") %>% View() ## Large number of them at 500 --> need to fix
+check_fraud_pct_num2("num_accts") ## Pretty stable
+check_fraud_pct_num2("outs_bal") ## larger balance --> more fraudulent ... need to fix the 99 value
+check_fraud_pct_num2("viol_mjr1") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("viol_mjr2") ## Seems very predictive ... 1+ is very fraudulent ... fix those with 17
+check_fraud_pct_num2("viol_mjr3") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("viol_mjr4") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("viol_mjr5") ## Seems very predictive ... 1+ is very fraudulent
+check_fraud_pct_num2("pop_density") ## Seems pretty stable
+check_fraud_pct_num("time_bet10pm2am") ## Later seems slightly more fraudulent
+check_fraud_pct_num2("time_bet10pm2am") %>% View() ## Checking for outliers ... fix those with 0.75
+check_fraud_pct_num("time_highway") ## Seems pretty stable
+check_fraud_pct_num2("time_highway") %>% View() ## Checking for outliers
+check_fraud_pct_num("exposure")  ## Seems pretty stable .. unclear why 0.5 or 1 isn't more common
+check_fraud_pct_num2("exposure") %>% View() ## Checking for outliers
+check_fraud_pct_num2("policy_tenure") %>% View() ## Seems pretty stable
+check_fraud_pct_num("credit_score") ## low credit scores tend to be better?? ... shouldn't be values above 1
+check_fraud_pct_num2("credit_score") %>% View() ## lots of values at 1.5 - will need to be fixed
+check_fraud_pct_num("report_lag" ,2) ## less fraud for lower reports
+check_fraud_pct_num2("report_lag") %>% View() ## Fix the 99 issue
+check_fraud_pct_num2("limits_numeric") ## Higher limits tend to have much less fruad
+check_fraud_pct_num2("claim_greater_than_limit") ## Predictive of fraud if claim > limit
+
+
+
+
+combined_data %>% 
+  mutate(testing = claimamount > limits_numeric) %>% 
+  group_by(testing) %>% 
+  summarise(n          = n()
+            ,fraud_ind = sum(fraud_ind)
+            ,fraud_pct = fraud_ind / n)
+  
 
 #########################################################
 ## Model Building
