@@ -9,6 +9,8 @@ library(kableExtra)
 library(RColorBrewer)
 library(rstudioapi)
 library(naniar)
+library(lubridate)
+library(ggcorrplot)
 
 ## Turn off scientific notation
 options(scipen = 999)
@@ -383,7 +385,6 @@ check_fraud_pct_num2("report_lag") %>% View() ## Fix the 99 issue
 check_fraud_pct_num2("limits_numeric") ## Higher limits tend to have much less fruad
 check_fraud_pct_num2("claim_greater_than_limit") ## Predictive of fraud if claim > limit
 
-
 ## Numeric variables that are missing:
 ## 1) Cell_Usage
 ## 2) Altitude
@@ -494,8 +495,270 @@ check_fraud_pct_num2("claim_greater_than_limit")
 ## 1) Pop_Density
 
 #########################################################
+## Exploratory Data Analysis - Date Columns
+#########################################################
+## Checking the conversion of the date columns from numeric
+combined_data %>% 
+  mutate(policy_orig_eff_date_new = ymd(policy_orig_eff_date)
+         ,accident_date_new       = ymd(accident_date)
+         ,pol_date_issue          = as.numeric(is.na(policy_orig_eff_date_new) & !is.na(policy_orig_eff_date))
+         ,acc_date_issue          = as.numeric(is.na(accident_date_new) & !is.na(accident_date))
+         ) %>% 
+  group_by(pol_date_issue ,acc_date_issue) %>% 
+  summarise(n          = n()
+            ,fraud_ind = sum(fraud_ind)
+            ,fraud_pct = fraud_ind / n) %>% 
+  arrange(desc(n))
+
+## Given that the date issue (February 29th & 30th) doesn't seem useful/predictive
+## just going to convert everything and have those be NA
+
+## Also going to confirm that there aren't any instances where claims are being paid
+## when the policy is not inforce
+combined_data %>% 
+  mutate(policy_orig_eff_date_new = ymd(policy_orig_eff_date)
+         ,accident_date_new       = ymd(accident_date)
+         ,final_eff_date          = policy_orig_eff_date + years(policy_tenure)
+         ,acc_greater_eff         = as.numeric(accident_date_new > final_eff_date)
+         ) %>% 
+  group_by(acc_greater_eff) %>% 
+  summarise(n          = n()
+            ,fraud_ind = sum(fraud_ind)
+            ,fraud_pct = fraud_ind / n) %>% 
+  arrange(desc(n))
+
+## Confirmed
+
+## Converting to dates
+combined_data <- combined_data %>% 
+  mutate(policy_orig_eff_date_new = ymd(policy_orig_eff_date)
+         ,accident_date_new       = ymd(accident_date)
+         ,policy_month            = month(policy_orig_eff_date_new)
+         ,policy_day              = day(policy_orig_eff_date_new)
+         ,policy_day_of_week      = wday(policy_orig_eff_date_new ,label = TRUE)
+         ,acc_month               = month(accident_date_new)
+         ,acc_day                 = day(accident_date_new)
+         ,acc_day_of_week         = wday(accident_date_new ,label = TRUE) 
+         ,report_date             = accident_date_new + days(report_lag)
+         )
+
+
+## Date variables that are missing:
+## 1) Report_date - recreated it with the report lag
+
+
+#########################################################
 ## Variable Relationships/Bucketing
 #########################################################
+## Creating a function to see if there are any polynomial relationships
+plot_num_bucket <- function(x ,y = 10) {
+  combined_data %>% 
+    mutate(band = cut_number(!!sym(x) ,n = y ,dig.lab = 10)) %>% 
+    group_by(band) %>% 
+    summarise(fraud_pct = sum(fraud_ind) / n()) %>% 
+    ungroup() %>% 
+    ggplot(aes(x = band , y = fraud_pct ,group = 1)) +
+      geom_line() +
+      geom_smooth(se = FALSE) +
+      labs(title = x) +
+      theme_fivethirtyeight()
+}
+
+plot_all_levels <- function(x) {
+  combined_data %>% 
+    group_by(!!sym(x)) %>% 
+    summarise(fraud_pct = sum(fraud_ind) / n()) %>% 
+    ungroup() %>% 
+    ggplot(aes(x = !!sym(x) , y = fraud_pct ,group = 1)) +
+    geom_line() +
+    geom_smooth(se = FALSE) +
+    labs(title = x) +
+    theme_fivethirtyeight()  
+}
+
+## Looking at some of the numeric variables
+plot_num_bucket("age") ## Uniformly decreasing
+plot_num_bucket("claimamount") ## Pretty uniformly increasing, slightly quadratic; NA matters
+plot_num_bucket("yrs_licensed") ## Uniformly decreasing
+plot_num_bucket("hp_vehicle") ## Pretty flat; NA matters
+plot_num_bucket("model_year") ## Pretty flat; NA matters
+plot_all_levels("num_drivers_new") ## Good candidate for spline
+plot_all_levels("clms_flt1_new") ## Good candidate for quadratic
+plot_all_levels("clms_flt2") ## Good candidate for quadratic
+plot_all_levels("clms_flt3") ## Pretty unform increasing
+plot_all_levels("clms_flt4") ## Somewhat non-uniform
+plot_all_levels("clms_flt5") ## Good candidate for quadratic
+plot_all_levels("clms_naf1") ## Non-uniform near after 4+
+plot_all_levels("clms_naf2") ## Good candidate for quadratic
+plot_all_levels("clms_naf3") ## Pretty uniformly increasing
+plot_all_levels("clms_naf4") ## Somewhat non-linear
+plot_all_levels("clms_naf5") ## Pretty uniformly increasing
+plot_all_levels("late_90d_new") ## Pretty uniformly increasing; somewhat sporadic at tail
+plot_all_levels("num_accts") ## Reasonably flat; somewhat jumpy
+plot_all_levels("outs_bal_new") ## Pretty uniformly increasing; somewhat sporadic at tail
+plot_all_levels("viol_mjr1") ## Increasing; quadratic
+plot_all_levels("viol_mjr2_new") ## Pretty uniformly increasing
+plot_all_levels("viol_mjr3") ## Pretty uniformly increasing; somewhat quadratic
+plot_all_levels("viol_mjr4") ## Pretty uniformly increasing
+plot_all_levels("viol_mjr5") ## Pretty uniformly increasing
+plot_all_levels("viol_mnr1") ## Pretty uniformly increasing; somewhat quadratic
+plot_all_levels("viol_mnr2") ## Pretty uniformly increasing; much higher in tail
+plot_all_levels("viol_mnr3") ## Quadratic
+plot_all_levels("viol_mnr4") ## Pretty uniformly increasing
+plot_all_levels("viol_mnr5") ## Quadratic
+plot_all_levels("pop_density") ## Doesn't seem predictive
+plot_all_levels("time_bet10pm2am_new") ## Very different pattern; spline could be good
+plot_all_levels("time_highway") ## Pretty flat
+plot_num_bucket("exposure") ## Doesn't seem too predictive
+plot_all_levels("policy_tenure") ## Doesn't seem too predictive
+plot_all_levels("credit_score_new") ## Uniformly increasing; somewhat quadratic
+plot_num_bucket("credit_score_new")
+plot_all_levels("report_lag") ## Somewhat increasing
+plot_all_levels("limits_numeric") ## Somewhat quadratic
+plot_all_levels("claim_greater_than_limit") ## Predictive; only two levels
+
+## The 
+## 
+combined_data %>% 
+  mutate(indicator   = as.numeric(viol_mjr1 > viol_mjr2_new | 
+                                    viol_mjr1 > viol_mjr3 |
+                                    viol_mjr1 > viol_mjr4 |
+                                    viol_mjr1 > viol_mjr5 |
+                                    viol_mjr2_new > viol_mjr3 |
+                                    viol_mjr2_new > viol_mjr4 |
+                                    viol_mjr2_new > viol_mjr5 |
+                                    viol_mjr2_new > viol_mjr5 |
+                                    viol_mjr3 > viol_mjr4 |
+                                    viol_mjr3 > viol_mjr4 |
+                                    viol_mjr4 > viol_mjr5
+                                  )
+         ,indicator2 = as.numeric(clms_flt1_new > clms_flt2 | 
+                                   clms_flt1_new > clms_flt3 |
+                                   clms_flt1_new > clms_flt4 |
+                                   clms_flt1_new > clms_flt5 |
+                                   clms_flt2 > clms_flt3 |
+                                   clms_flt2 > clms_flt4 |
+                                   clms_flt2 > clms_flt5 |
+                                   clms_flt2 > clms_flt5 |
+                                   clms_flt3 > clms_flt4 |
+                                   clms_flt3 > clms_flt4 |
+                                   clms_flt4 > clms_flt5
+                                 )
+         ,indicator3 = as.numeric(viol_mnr1 > viol_mnr2 | 
+                                    viol_mnr1 > viol_mnr3 |
+                                    viol_mnr1 > viol_mnr4 |
+                                    viol_mnr1 > viol_mnr5 |
+                                    viol_mnr2 > viol_mnr3 |
+                                    viol_mnr2 > viol_mnr4 |
+                                    viol_mnr2 > viol_mnr5 |
+                                    viol_mnr2 > viol_mnr5 |
+                                    viol_mnr3 > viol_mnr4 |
+                                    viol_mnr3 > viol_mnr4 |
+                                    viol_mnr4 > viol_mnr5)
+         ,issues     = as.numeric(viol_mjr1 > viol_mjr2_new) + 
+                        as.numeric(viol_mjr1 > viol_mjr3) +
+                        as.numeric(viol_mjr1 > viol_mjr4) +
+                        as.numeric(viol_mjr1 > viol_mjr5) +
+                        as.numeric(viol_mjr2_new > viol_mjr3) +
+                        as.numeric(viol_mjr2_new > viol_mjr4) +
+                        as.numeric(viol_mjr2_new > viol_mjr5) +
+                        as.numeric(viol_mjr2_new > viol_mjr5) +
+                        as.numeric(viol_mjr3 > viol_mjr4) +
+                        as.numeric(viol_mjr3 > viol_mjr4) +
+                        as.numeric(viol_mjr4 > viol_mjr5)
+         ,issues2   = as.numeric(clms_flt1_new > clms_flt2) + 
+                        as.numeric(clms_flt1_new > clms_flt3) +
+                        as.numeric(clms_flt1_new > clms_flt4) +
+                        as.numeric(clms_flt1_new > clms_flt5) +
+                        as.numeric(clms_flt2 > clms_flt3) +
+                        as.numeric(clms_flt2 > clms_flt4) +
+                        as.numeric(clms_flt2 > clms_flt5) +
+                        as.numeric(clms_flt2 > clms_flt5) +
+                        as.numeric(clms_flt3 > clms_flt4) +
+                        as.numeric(clms_flt3 > clms_flt4) +
+                        as.numeric(clms_flt4 > clms_flt5)
+         ,issues3   = as.numeric(viol_mnr1 > viol_mnr2) + 
+                        as.numeric(viol_mnr1 > viol_mnr3) +
+                        as.numeric(viol_mnr1 > viol_mnr4) +
+                        as.numeric(viol_mnr1 > viol_mnr5) +
+                        as.numeric(viol_mnr2 > viol_mnr3) +
+                        as.numeric(viol_mnr2 > viol_mnr4) +
+                        as.numeric(viol_mnr2 > viol_mnr5) +
+                        as.numeric(viol_mnr2 > viol_mnr5) +
+                        as.numeric(viol_mnr3 > viol_mnr4) +
+                        as.numeric(viol_mnr3 > viol_mnr4) +
+                        as.numeric(viol_mnr4 > viol_mnr5)
+         ,issues4   = as.numeric(clms_naf1 > clms_naf2) + 
+                        as.numeric(clms_naf1 > clms_naf3) +
+                        as.numeric(clms_naf1 > clms_naf4) +
+                        as.numeric(clms_naf1 > clms_naf5) +
+                        as.numeric(clms_naf2 > clms_naf3) +
+                        as.numeric(clms_naf2 > clms_naf4) +
+                        as.numeric(clms_naf2 > clms_naf5) +
+                        as.numeric(clms_naf2 > clms_naf5) +
+                        as.numeric(clms_naf3 > clms_naf4) +
+                        as.numeric(clms_naf3 > clms_naf4) +
+                        as.numeric(clms_naf4 > clms_naf5)         
+         ,total_issues = issues + issues2 + issues3 + issues4
+         ,avg_maj_viol = case_when(yrs_licensed == 1 ~ viol_mjr1
+                                   ,yrs_licensed == 2 ~ viol_mjr2_new / 2
+                                   ,yrs_licensed == 3 ~ viol_mjr3 / 3
+                                   ,yrs_licensed == 4 ~ viol_mjr4 / 4
+                                   ,yrs_licensed >= 5 ~ viol_mjr5 / 5
+                                   ,TRUE ~ NA)
+         ,avg_clms_flt = case_when(yrs_licensed == 1 ~ clms_flt1_new
+                                   ,yrs_licensed == 2 ~ clms_flt2 / 2
+                                   ,yrs_licensed == 3 ~ clms_flt3 / 3
+                                   ,yrs_licensed == 4 ~ clms_flt4 / 4
+                                   ,yrs_licensed >= 5 ~ clms_flt5 / 5
+                                   ,TRUE ~ NA)
+         ,avg_viol_mnr = case_when(yrs_licensed == 1 ~ viol_mnr1
+                                   ,yrs_licensed == 2 ~ viol_mnr2 / 2
+                                   ,yrs_licensed == 3 ~ viol_mnr3 / 3
+                                   ,yrs_licensed == 4 ~ viol_mnr4 / 4
+                                   ,yrs_licensed >= 5 ~ viol_mnr5 / 5
+                                   ,TRUE ~ NA)
+         ,avg_clms_naf = case_when(yrs_licensed == 1 ~ clms_naf1
+                                   ,yrs_licensed == 2 ~ clms_naf2 / 2
+                                   ,yrs_licensed == 3 ~ clms_naf3 / 3
+                                   ,yrs_licensed == 4 ~ clms_naf4 / 4
+                                   ,yrs_licensed >= 5 ~ clms_naf5 / 5
+                                   ,TRUE ~ NA)    
+         ,avg_total    = avg_maj_viol + avg_clms_flt + avg_viol_mnr + avg_clms_naf
+         ) %>% 
+  group_by(total_issues) %>% 
+  summarise(n          = n()
+            ,fraud_ind = sum(fraud_ind)
+            ,fraud_pct = fraud_ind / n) %>%
+  ggplot(aes(x = total_issues ,y = fraud_pct)) +
+    geom_point() +
+    geom_line() +
+    geom_smooth(se = FALSE) +
+    theme_fivethirtyeight()
+  ungroup() %>% 
+  na.exclude() %>% 
+  View()
+  
+
+combined_data %>% 
+  select(clms_flt1_new ,contains("clms_flt") ,-clms_flt1) %>% 
+  na.exclude() %>% 
+  cor() %>% 
+  ggcorrplot()
+
+combined_data %>% 
+  select_if(is.numeric) %>% 
+  na.exclude() %>% 
+  cor() %>% 
+  ggcorrplot()
+
+  ggplot(aes(x = clms_flt1_new ,y = clms_flt2)) +
+    geom_point() +
+    geom_jitter() +
+    geom_smooth(se = FALSE) +
+    labs(title = x) +
+    theme_fivethirtyeight()
+
 
 
 #########################################################
