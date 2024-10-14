@@ -11,6 +11,8 @@ library(rstudioapi)
 library(naniar)
 library(lubridate)
 library(ggcorrplot)
+library(leaps)
+library(glmnet)
 
 ## Turn off scientific notation
 options(scipen = 999)
@@ -61,7 +63,7 @@ raw_policy_data %>%
   count(policy_id) %>% 
   filter(n > 1) %>% 
   arrange(desc(n))
-  
+
 ## Policy Id is not unique ... 142 duplicates. Need to understand it better
 raw_policy_data %>% 
   filter(policy_id == "P101444063304") %>% View()
@@ -160,10 +162,10 @@ separated_claim_data <- combined_data %>%
                        ,delim = "." 
                        ,names_sep = "_"
                        ,too_few = "align_start"
-                       ) %>% 
+  ) %>% 
   mutate_at(vars(contains("claim_notes")) ,str_trim) %>% 
   mutate_at(vars(contains("claim_notes")) ,function(x) {if_else(x == "" ,NA ,x)})
-  
+
 ## Joining the notes back onto the original dataset
 combined_data <- combined_data %>% 
   left_join(separated_claim_data ,by = "claim_id")
@@ -216,16 +218,16 @@ combined_data <- combined_data %>%
          ,note_vehicle_1        = str_sub(claim_notes_1
                                           ,start = str_locate(claim_notes_1 ,pattern = "\\(")[,"start"]
                                           ,end = str_locate(claim_notes_1 ,pattern = "\\)")[,"start"]
-                                          ) %>% 
-                                     str_remove_all(pattern = "\\(|\\)") %>% 
-                                     str_trim()
+         ) %>% 
+           str_remove_all(pattern = "\\(|\\)") %>% 
+           str_trim()
          ,fraud_ind_1           = str_extract(note_type_1 %>% 
                                                 str_replace(pattern = "Frauuuuud" ,replacement = "Fraud") %>% 
                                                 tolower()
                                               ,pattern = "fraud\\s*(\\S+)")
          ,pedestrian_flag_2     = str_extract(claim_notes_2 %>% tolower()
                                               ,pattern = "cyclist|pedestrian") %>% 
-                                     coalesce("Other")
+           coalesce("Other")
          ,injury_type_2         = str_extract(claim_notes_2 %>% tolower() 
                                               ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries")
          ,injury_level_2        = str_extract(claim_notes_2 %>% tolower() 
@@ -266,7 +268,7 @@ combined_data <- combined_data %>%
                                                 str_replace(pattern = "frauuuuud" ,replacement = "fraud")
                                               ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud|no signs of fraud")
          ,note_type             = note_type_1 %>% 
-                                     str_replace(pattern = "Frauuuuud|frauuuuud" ,replacement = "Fraud")
+           str_replace(pattern = "Frauuuuud|frauuuuud" ,replacement = "Fraud")
          ,vehicle_mismatch_flag = as.numeric(str_c(make ," " ,model) != note_vehicle_1)
          ,pedestrian_type       = pedestrian_flag_2
          ,injury_type           = if_else(!is.na(injury_type_2) & !is.na(injury_type_3)
@@ -277,14 +279,16 @@ combined_data <- combined_data %>%
          ,triple_exclamation    = coalesce(triple_exclamation_3 ,triple_exclamation_4 ,triple_exclamation_5)
          ,fraud_note_ind        = if_else(!is.na(fraud_ind_1) & !is.na(fraud_ind_2) 
                                           ,str_c(fraud_ind_1 ," " ,fraud_ind_2)
-                                          ,coalesce(fraud_ind_1 ,fraud_ind_2 ,fraud_ind_3 ,fraud_ind_4 ,fraud_ind_5)
-                                          )
+                                          ,coalesce(fraud_ind_1 ,fraud_ind_2 ,fraud_ind_3 ,fraud_ind_4 ,fraud_ind_5
+                                                    ,"no mention of fraud")
+         )
          ,fraud_note_ind        = if_else(str_detect(fraud_note_ind ,pattern = "susp")
                                           ,"suspected fraud"
                                           ,fraud_note_ind
-                                          ) %>% 
-                                     factor(levels = c('no signs of fraud' ,'probably not fraud' ,'suspected fraud' ,'fraud'))
          ) %>% 
+           factor(levels = c('no mention of fraud' ,'no signs of fraud' 
+                             ,'probably not fraud' ,'suspected fraud' ,'fraud'))
+  ) %>% 
   select(-matches("_[0-9]$"))
 
 
@@ -403,7 +407,7 @@ combined_data <- combined_data %>%
          ,time_bet10pm2am_new = na_if(time_bet10pm2am ,0.75)
          ,credit_score_new    = na_if(credit_score ,1.5)
          ,report_lag_new      = na_if(report_lag ,99)
-         )
+  )
 
 
 #########################################################
@@ -436,43 +440,46 @@ check_fraud_pct_num2("alcohol_or_drugs") ## Could be somewhat useful?
 combined_data <- combined_data %>% 
   mutate(gender_new                = case_when(gender %in% c('Boy' ,'M' ,'Male') ~ 'Male'
                                                ,gender %in% c('F' ,'Female' ,'Girl') ~ 'Female') %>% 
-                                        factor(levels = c('Male' ,'Female'))
+           factor(levels = c('Male' ,'Female'))
          ,education_new            = factor(education ,levels = c('Some High School' ,'High School or GED'
                                                                   ,'Bachelors' ,'Masters' ,'Doctorate'))
          ,limits_new               = str_replace_all(limits ,pattern = "k" ,replacement = "000") %>% 
-                                        str_replace_all(pattern = "000$" ,replacement = "k") %>% 
-                                        factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"200k" ,"250k" ,"300k" ,"500k"))
+           str_replace_all(pattern = "000$" ,replacement = "k") %>% 
+           factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"200k" ,"250k" ,"300k" ,"500k"))
          ,limits_numeric           = limits_new %>% 
-                                        str_replace(pattern = "k" ,replacement = "000") %>% 
-                                        as.numeric()
+           str_replace(pattern = "k" ,replacement = "000") %>% 
+           as.numeric()
          ,marital_status_new       = case_when(marital_status %in% c('M' ,'Marr' ,'Married') ~ 'Married'
                                                ,marital_status %in% c('S' ,'Single') ~ 'Single') %>% 
-                                        as.factor()
+           as.factor()
          ,num_cars_new             = case_when(num_cars == "Four" ~ "4"
                                                ,num_cars == "Three" ~ "3"
                                                ,num_cars == "Two" ~ "2"
                                                ,TRUE ~ num_cars
-                                               ) %>% 
-                                        as.factor()
+         ) %>% 
+           as.factor()
          ,num_cars_band_new        = case_when(num_cars == "1" ~ "1"
                                                ,TRUE ~ "2+") %>% 
-                                        as.factor()         
+           as.factor()         
          ,seat_belt_new            = seat_belt %>%
-                                        factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
-                                                          ,'Unknown'))
+           factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
+                             ,'Unknown'))
          ,income_new               = case_when(income %in% c('Mid' ,'Middle') ~ 'Middle'
                                                ,income %in% c('Working' ,'Wrk') ~ 'Working'
                                                ,TRUE ~ income) %>% 
-                                        factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
+           factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
          ,note_type_new            = case_when(!(note_type %in% c(":" ,"Fraud Suspected:" ,"Hit-and-run incident:")) ~ "All Other"
                                                ,TRUE ~ note_type
-                                               ) %>% 
-                                        factor(levels = c(":" ,"All Other" ,"Hit-and-run incident:" ,"Fraud Suspected:"))
+         ) %>% 
+           factor(levels = c(":" ,"All Other" ,"Hit-and-run incident:" ,"Fraud Suspected:"))
          ,pedestrian_type_new      = pedestrian_type %>% tolower() %>% factor(levels = c("other" ,"cyclist" ,"pedestrian"))
          ,injury_type_new          = injury_type %>% as.factor()
-         ,police_type_new          = police_type %>% factor(levels = c("officer on site" ,"police report" ,"police and medical assistance"
-                                                                       ,"police notified"))
-         ,alcohol_or_drugs_new     = alcohol_or_drugs %>% as.factor()
+         ,police_type_new          = police_type %>% 
+           coalesce("no mention of police") %>% 
+           factor(levels = c("officer on site" ,"police report" 
+                             ,"police and medical assistance"
+                             ,"police notified" ,"no mention of police"))
+         ,alcohol_or_drugs_new     = alcohol_or_drugs %>% coalesce("All Other") %>% as.factor()
          ,claim_greater_than_limit = as.numeric(claimamount > limits_numeric)
   ) 
 
@@ -503,7 +510,7 @@ combined_data %>%
          ,accident_date_new       = ymd(accident_date)
          ,pol_date_issue          = as.numeric(is.na(policy_orig_eff_date_new) & !is.na(policy_orig_eff_date))
          ,acc_date_issue          = as.numeric(is.na(accident_date_new) & !is.na(accident_date))
-         ) %>% 
+  ) %>% 
   group_by(pol_date_issue ,acc_date_issue) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -520,7 +527,7 @@ combined_data %>%
          ,accident_date_new       = ymd(accident_date)
          ,final_eff_date          = policy_orig_eff_date + years(policy_tenure)
          ,acc_greater_eff         = as.numeric(accident_date_new > final_eff_date)
-         ) %>% 
+  ) %>% 
   group_by(acc_greater_eff) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
@@ -540,7 +547,7 @@ combined_data <- combined_data %>%
          ,acc_day                 = day(accident_date_new)
          ,acc_day_of_week         = wday(accident_date_new ,label = TRUE) 
          ,report_date             = accident_date_new + days(report_lag)
-         )
+  )
 
 
 ## Date variables that are missing:
@@ -558,10 +565,10 @@ plot_num_bucket <- function(x ,y = 10) {
     summarise(fraud_pct = sum(fraud_ind) / n()) %>% 
     ungroup() %>% 
     ggplot(aes(x = band , y = fraud_pct ,group = 1)) +
-      geom_line() +
-      geom_smooth(se = FALSE) +
-      labs(title = x) +
-      theme_fivethirtyeight()
+    geom_line() +
+    geom_smooth(se = FALSE) +
+    labs(title = x) +
+    theme_fivethirtyeight()
 }
 
 plot_all_levels <- function(x) {
@@ -574,6 +581,22 @@ plot_all_levels <- function(x) {
     geom_smooth(se = FALSE) +
     labs(title = x) +
     theme_fivethirtyeight()  
+}
+
+plot_x_y_vars <- function(x , y) {
+  combined_data %>%
+    filter(!!sym(x) != 0 & !!sym(y) != 0) %>% 
+    mutate(indicator = if_else(!!sym(x) > !!sym(y)
+                               ,"Weird"
+                               ,"Normal") %>% 
+             factor(levels = c("Weird" ,"Normal"))
+    ) %>% 
+    ggplot(aes(x = !!sym(x) ,fill = indicator)) +
+    geom_bar() +
+    scale_fill_brewer(palette = "Set1") +
+    facet_wrap(str_c("~" ,y ,sep = " ")) +
+    scale_y_continuous(label = comma) +
+    ylab(y) 
 }
 
 ## Looking at some of the numeric variables
@@ -617,9 +640,24 @@ plot_all_levels("report_lag") ## Somewhat increasing
 plot_all_levels("limits_numeric") ## Somewhat quadratic
 plot_all_levels("claim_greater_than_limit") ## Predictive; only two levels
 
-## The 
-## 
-combined_data %>% 
+## Looking at one of the variables that has x years
+plot_x_y_vars("clms_flt1_new" ,"clms_flt2")
+plot_x_y_vars("clms_flt1_new" ,"clms_flt3")
+plot_x_y_vars("clms_flt1_new" ,"clms_flt4")
+plot_x_y_vars("clms_flt1_new" ,"clms_flt5")
+plot_x_y_vars("clms_flt2" ,"clms_flt3")
+plot_x_y_vars("clms_flt2" ,"clms_flt4")
+plot_x_y_vars("clms_flt2" ,"clms_flt5")
+plot_x_y_vars("clms_flt3" ,"clms_flt4")
+plot_x_y_vars("clms_flt3" ,"clms_flt5")
+plot_x_y_vars("clms_flt4" ,"clms_flt5")
+
+## It's really unclear to me why there would ever be a scenario 
+## where the number of historical at-fault claims in the past # year(s) for the insured
+## would be greater than the historical at-fault claims in the past (#-1) year(s)
+
+## Going to create an indicator    
+combined_data <- combined_data %>% 
   mutate(indicator   = as.numeric(viol_mjr1 > viol_mjr2_new | 
                                     viol_mjr1 > viol_mjr3 |
                                     viol_mjr1 > viol_mjr4 |
@@ -631,152 +669,197 @@ combined_data %>%
                                     viol_mjr3 > viol_mjr4 |
                                     viol_mjr3 > viol_mjr4 |
                                     viol_mjr4 > viol_mjr5
-                                  )
-         ,indicator2 = as.numeric(clms_flt1_new > clms_flt2 | 
-                                   clms_flt1_new > clms_flt3 |
-                                   clms_flt1_new > clms_flt4 |
-                                   clms_flt1_new > clms_flt5 |
-                                   clms_flt2 > clms_flt3 |
-                                   clms_flt2 > clms_flt4 |
-                                   clms_flt2 > clms_flt5 |
-                                   clms_flt2 > clms_flt5 |
-                                   clms_flt3 > clms_flt4 |
-                                   clms_flt3 > clms_flt4 |
-                                   clms_flt4 > clms_flt5
-                                 )
-         ,indicator3 = as.numeric(viol_mnr1 > viol_mnr2 | 
-                                    viol_mnr1 > viol_mnr3 |
-                                    viol_mnr1 > viol_mnr4 |
-                                    viol_mnr1 > viol_mnr5 |
-                                    viol_mnr2 > viol_mnr3 |
-                                    viol_mnr2 > viol_mnr4 |
-                                    viol_mnr2 > viol_mnr5 |
-                                    viol_mnr2 > viol_mnr5 |
-                                    viol_mnr3 > viol_mnr4 |
-                                    viol_mnr3 > viol_mnr4 |
-                                    viol_mnr4 > viol_mnr5)
-         ,issues     = as.numeric(viol_mjr1 > viol_mjr2_new) + 
-                        as.numeric(viol_mjr1 > viol_mjr3) +
-                        as.numeric(viol_mjr1 > viol_mjr4) +
-                        as.numeric(viol_mjr1 > viol_mjr5) +
-                        as.numeric(viol_mjr2_new > viol_mjr3) +
-                        as.numeric(viol_mjr2_new > viol_mjr4) +
-                        as.numeric(viol_mjr2_new > viol_mjr5) +
-                        as.numeric(viol_mjr2_new > viol_mjr5) +
-                        as.numeric(viol_mjr3 > viol_mjr4) +
-                        as.numeric(viol_mjr3 > viol_mjr4) +
-                        as.numeric(viol_mjr4 > viol_mjr5)
-         ,issues2   = as.numeric(clms_flt1_new > clms_flt2) + 
-                        as.numeric(clms_flt1_new > clms_flt3) +
-                        as.numeric(clms_flt1_new > clms_flt4) +
-                        as.numeric(clms_flt1_new > clms_flt5) +
-                        as.numeric(clms_flt2 > clms_flt3) +
-                        as.numeric(clms_flt2 > clms_flt4) +
-                        as.numeric(clms_flt2 > clms_flt5) +
-                        as.numeric(clms_flt2 > clms_flt5) +
-                        as.numeric(clms_flt3 > clms_flt4) +
-                        as.numeric(clms_flt3 > clms_flt4) +
-                        as.numeric(clms_flt4 > clms_flt5)
-         ,issues3   = as.numeric(viol_mnr1 > viol_mnr2) + 
-                        as.numeric(viol_mnr1 > viol_mnr3) +
-                        as.numeric(viol_mnr1 > viol_mnr4) +
-                        as.numeric(viol_mnr1 > viol_mnr5) +
-                        as.numeric(viol_mnr2 > viol_mnr3) +
-                        as.numeric(viol_mnr2 > viol_mnr4) +
-                        as.numeric(viol_mnr2 > viol_mnr5) +
-                        as.numeric(viol_mnr2 > viol_mnr5) +
-                        as.numeric(viol_mnr3 > viol_mnr4) +
-                        as.numeric(viol_mnr3 > viol_mnr4) +
-                        as.numeric(viol_mnr4 > viol_mnr5)
-         ,issues4   = as.numeric(clms_naf1 > clms_naf2) + 
-                        as.numeric(clms_naf1 > clms_naf3) +
-                        as.numeric(clms_naf1 > clms_naf4) +
-                        as.numeric(clms_naf1 > clms_naf5) +
-                        as.numeric(clms_naf2 > clms_naf3) +
-                        as.numeric(clms_naf2 > clms_naf4) +
-                        as.numeric(clms_naf2 > clms_naf5) +
-                        as.numeric(clms_naf2 > clms_naf5) +
-                        as.numeric(clms_naf3 > clms_naf4) +
-                        as.numeric(clms_naf3 > clms_naf4) +
-                        as.numeric(clms_naf4 > clms_naf5)         
-         ,total_issues = issues + issues2 + issues3 + issues4
-         ,avg_maj_viol = case_when(yrs_licensed == 1 ~ viol_mjr1
-                                   ,yrs_licensed == 2 ~ viol_mjr2_new / 2
-                                   ,yrs_licensed == 3 ~ viol_mjr3 / 3
-                                   ,yrs_licensed == 4 ~ viol_mjr4 / 4
-                                   ,yrs_licensed >= 5 ~ viol_mjr5 / 5
-                                   ,TRUE ~ NA)
-         ,avg_clms_flt = case_when(yrs_licensed == 1 ~ clms_flt1_new
-                                   ,yrs_licensed == 2 ~ clms_flt2 / 2
-                                   ,yrs_licensed == 3 ~ clms_flt3 / 3
-                                   ,yrs_licensed == 4 ~ clms_flt4 / 4
-                                   ,yrs_licensed >= 5 ~ clms_flt5 / 5
-                                   ,TRUE ~ NA)
-         ,avg_viol_mnr = case_when(yrs_licensed == 1 ~ viol_mnr1
-                                   ,yrs_licensed == 2 ~ viol_mnr2 / 2
-                                   ,yrs_licensed == 3 ~ viol_mnr3 / 3
-                                   ,yrs_licensed == 4 ~ viol_mnr4 / 4
-                                   ,yrs_licensed >= 5 ~ viol_mnr5 / 5
-                                   ,TRUE ~ NA)
-         ,avg_clms_naf = case_when(yrs_licensed == 1 ~ clms_naf1
-                                   ,yrs_licensed == 2 ~ clms_naf2 / 2
-                                   ,yrs_licensed == 3 ~ clms_naf3 / 3
-                                   ,yrs_licensed == 4 ~ clms_naf4 / 4
-                                   ,yrs_licensed >= 5 ~ clms_naf5 / 5
-                                   ,TRUE ~ NA)    
-         ,avg_total    = avg_maj_viol + avg_clms_flt + avg_viol_mnr + avg_clms_naf
-         ) %>% 
-  group_by(total_issues) %>% 
+  )
+  ,indicator2 = as.numeric(clms_flt1_new > clms_flt2 | 
+                             clms_flt1_new > clms_flt3 |
+                             clms_flt1_new > clms_flt4 |
+                             clms_flt1_new > clms_flt5 |
+                             clms_flt2 > clms_flt3 |
+                             clms_flt2 > clms_flt4 |
+                             clms_flt2 > clms_flt5 |
+                             clms_flt2 > clms_flt5 |
+                             clms_flt3 > clms_flt4 |
+                             clms_flt3 > clms_flt4 |
+                             clms_flt4 > clms_flt5
+  )
+  ,indicator3 = as.numeric(viol_mnr1 > viol_mnr2 | 
+                             viol_mnr1 > viol_mnr3 |
+                             viol_mnr1 > viol_mnr4 |
+                             viol_mnr1 > viol_mnr5 |
+                             viol_mnr2 > viol_mnr3 |
+                             viol_mnr2 > viol_mnr4 |
+                             viol_mnr2 > viol_mnr5 |
+                             viol_mnr2 > viol_mnr5 |
+                             viol_mnr3 > viol_mnr4 |
+                             viol_mnr3 > viol_mnr4 |
+                             viol_mnr4 > viol_mnr5)
+  ,issues     = as.numeric(viol_mjr1 > viol_mjr2_new) + 
+    as.numeric(viol_mjr1 > viol_mjr3) +
+    as.numeric(viol_mjr1 > viol_mjr4) +
+    as.numeric(viol_mjr1 > viol_mjr5) +
+    as.numeric(viol_mjr2_new > viol_mjr3) +
+    as.numeric(viol_mjr2_new > viol_mjr4) +
+    as.numeric(viol_mjr2_new > viol_mjr5) +
+    as.numeric(viol_mjr2_new > viol_mjr5) +
+    as.numeric(viol_mjr3 > viol_mjr4) +
+    as.numeric(viol_mjr3 > viol_mjr4) +
+    as.numeric(viol_mjr4 > viol_mjr5)
+  ,issues2   = as.numeric(clms_flt1_new > clms_flt2) + 
+    as.numeric(clms_flt1_new > clms_flt3) +
+    as.numeric(clms_flt1_new > clms_flt4) +
+    as.numeric(clms_flt1_new > clms_flt5) +
+    as.numeric(clms_flt2 > clms_flt3) +
+    as.numeric(clms_flt2 > clms_flt4) +
+    as.numeric(clms_flt2 > clms_flt5) +
+    as.numeric(clms_flt2 > clms_flt5) +
+    as.numeric(clms_flt3 > clms_flt4) +
+    as.numeric(clms_flt3 > clms_flt4) +
+    as.numeric(clms_flt4 > clms_flt5)
+  ,issues3   = as.numeric(viol_mnr1 > viol_mnr2) + 
+    as.numeric(viol_mnr1 > viol_mnr3) +
+    as.numeric(viol_mnr1 > viol_mnr4) +
+    as.numeric(viol_mnr1 > viol_mnr5) +
+    as.numeric(viol_mnr2 > viol_mnr3) +
+    as.numeric(viol_mnr2 > viol_mnr4) +
+    as.numeric(viol_mnr2 > viol_mnr5) +
+    as.numeric(viol_mnr2 > viol_mnr5) +
+    as.numeric(viol_mnr3 > viol_mnr4) +
+    as.numeric(viol_mnr3 > viol_mnr4) +
+    as.numeric(viol_mnr4 > viol_mnr5)
+  ,issues4   = as.numeric(clms_naf1 > clms_naf2) + 
+    as.numeric(clms_naf1 > clms_naf3) +
+    as.numeric(clms_naf1 > clms_naf4) +
+    as.numeric(clms_naf1 > clms_naf5) +
+    as.numeric(clms_naf2 > clms_naf3) +
+    as.numeric(clms_naf2 > clms_naf4) +
+    as.numeric(clms_naf2 > clms_naf5) +
+    as.numeric(clms_naf2 > clms_naf5) +
+    as.numeric(clms_naf3 > clms_naf4) +
+    as.numeric(clms_naf3 > clms_naf4) +
+    as.numeric(clms_naf4 > clms_naf5)         
+  ,total_issues = issues + issues2 + issues3 + issues4
+  ,avg_maj_viol = case_when(yrs_licensed == 1 ~ viol_mjr1
+                            ,yrs_licensed == 2 ~ viol_mjr2_new / 2
+                            ,yrs_licensed == 3 ~ viol_mjr3 / 3
+                            ,yrs_licensed == 4 ~ viol_mjr4 / 4
+                            ,yrs_licensed >= 5 ~ viol_mjr5 / 5
+                            ,TRUE ~ 0)
+  ,avg_clms_flt = case_when(yrs_licensed == 1 ~ clms_flt1_new
+                            ,yrs_licensed == 2 ~ clms_flt2 / 2
+                            ,yrs_licensed == 3 ~ clms_flt3 / 3
+                            ,yrs_licensed == 4 ~ clms_flt4 / 4
+                            ,yrs_licensed >= 5 ~ clms_flt5 / 5
+                            ,TRUE ~ 0)
+  ,avg_viol_mnr = case_when(yrs_licensed == 1 ~ viol_mnr1
+                            ,yrs_licensed == 2 ~ viol_mnr2 / 2
+                            ,yrs_licensed == 3 ~ viol_mnr3 / 3
+                            ,yrs_licensed == 4 ~ viol_mnr4 / 4
+                            ,yrs_licensed >= 5 ~ viol_mnr5 / 5
+                            ,TRUE ~ 0)
+  ,avg_clms_naf = case_when(yrs_licensed == 1 ~ clms_naf1
+                            ,yrs_licensed == 2 ~ clms_naf2 / 2
+                            ,yrs_licensed == 3 ~ clms_naf3 / 3
+                            ,yrs_licensed == 4 ~ clms_naf4 / 4
+                            ,yrs_licensed >= 5 ~ clms_naf5 / 5
+                            ,TRUE ~ 0)    
+  ,avg_total    = avg_maj_viol + avg_clms_flt + avg_viol_mnr + avg_clms_naf
+  ,avg_total    = coalesce(avg_total ,0)
+  )
+# group_by(total_issues) %>% 
+# summarise(n          = n()
+#           ,fraud_ind = sum(fraud_ind)
+#           ,fraud_pct = fraud_ind / n) %>%
+# ggplot(aes(x = total_issues ,y = fraud_pct)) +
+#   geom_point() +
+#   geom_line() +
+#   geom_smooth(se = FALSE) +
+#   theme_fivethirtyeight()
+# ungroup() %>% 
+# na.exclude() %>% 
+# View()
+
+
+#########################################################
+##  Model Building
+#########################################################
+## Removing the unnecessary columns
+remove_cols <- combined_data %>% 
+  colnames() %>% 
+  enframe() %>% 
+  filter(str_detect(value ,pattern = "_new")) %>% 
+  filter(!str_detect(value ,pattern = "num_cars_band")) %>% 
+  mutate(remove_cols = str_remove_all(value ,pattern = "_new")) %>% 
+  select(remove_cols) %>% 
+  pull()
+
+## Fixing all the NA's as well
+## It would be much better to have the shadows ... but unfortunately
+## that makes the matrix to big below (i.e. cannot allocate vector of x.x Gb error)
+## Just going to move forward without them
+model_data <- combined_data %>% 
+  select(-contains("id") ,-all_of(remove_cols) ,-contains("clms")
+         ,-matches("^clms") ,-matches("^viol") ,-matches("^indicator")
+         ,-matches("^issues") ,-limits_numeric ,-claim_notes ,-make ,-model) %>% 
+  select(fraud_ind ,everything()) %>% 
+  # bind_shadow(only_miss = TRUE) %>% ## Taking this out since many of the variables don't have any NA's at this point
+  # add_label_shadow() %>% 
+  impute_median_if(is.numeric) %>%
+  impute_median_if(is.factor) %>%
+  impute_median_if(is.Date)
+
+
+
+## Setting up a training vs test dataset
+set.seed(741995)
+
+train <- sample(nrow(model_data) ,round(nrow(model_data) * 0.7 ,0))
+
+training_data <- model_data[train ,]
+testing_data <- model_data[-train ,]
+
+## Transforming into a matrix
+x <- model.matrix(fraud_ind ~ fraud_note_ind ,training_data)[ ,-1]
+y <- model.matrix(fraud_ind ~ . ,training_data)[ ,1]
+
+## Going to try a lasso regression
+lasso_grid <- 10^seq(10 ,-2 ,length = 100)
+
+cv_lasso <- cv.glmnet(x 
+                      ,y 
+                      ,alpha = 1 
+                      ,family = binomial
+)
+
+
+plot(lasso_mod)
+
+
+
+testing_mod <- glm(fraud_ind ~ .
+                   ,data = training_data 
+                   ,family = binomial)
+
+summary(testing_mod)
+
+predictions <- predict(testing_mod ,type = "response")
+
+training_data %>% 
+  bind_cols(predictions) %>%
+  rename(prediction = ...46) %>% 
+  select(fraud_ind ,prediction) %>% 
+  mutate(converted = as.numeric(prediction > .15)) %>% 
+  group_by(converted) %>% 
   summarise(n          = n()
             ,fraud_ind = sum(fraud_ind)
-            ,fraud_pct = fraud_ind / n) %>%
-  ggplot(aes(x = total_issues ,y = fraud_pct)) +
-    geom_point() +
-    geom_line() +
-    geom_smooth(se = FALSE) +
-    theme_fivethirtyeight()
-  ungroup() %>% 
-  na.exclude() %>% 
-  View()
-  
-
-combined_data %>% 
-  select(clms_flt1_new ,contains("clms_flt") ,-clms_flt1) %>% 
-  na.exclude() %>% 
-  cor() %>% 
-  ggcorrplot()
-
-combined_data %>% 
-  select_if(is.numeric) %>% 
-  na.exclude() %>% 
-  cor() %>% 
-  ggcorrplot()
-
-  ggplot(aes(x = clms_flt1_new ,y = clms_flt2)) +
-    geom_point() +
-    geom_jitter() +
-    geom_smooth(se = FALSE) +
-    labs(title = x) +
-    theme_fivethirtyeight()
+            ,fraud_pct = fraud_ind / n
+  )
 
 
 
-#########################################################
-## Model Building
-#########################################################
-## Adding some additional variables before the modeling
-combined_data <- combined_data %>% 
-  mutate(acc_minus_eff_date = accident_date - policy_orig_eff_date)
-
-## Get the variables I'm interested in using for modeling purposes
-model_vars <- colnames(combined_data) %>% 
-  enframe(name = NULL) %>% 
-  filter(!str_detect(value ,pattern = "_id$"))
 
 
-combined_data %>% 
-  
-  
+
+
 
 
 
