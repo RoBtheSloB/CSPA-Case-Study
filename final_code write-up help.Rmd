@@ -560,6 +560,140 @@ plot_x_y_vars("clms_flt1_new" ,"clms_flt2")
 # plot_x_y_vars("clms_flt3" ,"clms_flt4")
 # plot_x_y_vars("clms_flt3" ,"clms_flt5")
 # plot_x_y_vars("clms_flt4" ,"clms_flt5")
+
 ```
 
+
+```{r include=FALSE}
+## Going to create an indicator    
+combined_data <- combined_data %>% 
+  mutate(indicator   = as.numeric(viol_mjr1 > viol_mjr2_new | 
+                                    viol_mjr1 > viol_mjr3 |
+                                    viol_mjr1 > viol_mjr4 |
+                                    viol_mjr1 > viol_mjr5 |
+                                    viol_mjr2_new > viol_mjr3 |
+                                    viol_mjr2_new > viol_mjr4 |
+                                    viol_mjr2_new > viol_mjr5 |
+                                    viol_mjr2_new > viol_mjr5 |
+                                    viol_mjr3 > viol_mjr4 |
+                                    viol_mjr3 > viol_mjr4 |
+                                    viol_mjr4 > viol_mjr5
+  )
+  ,indicator2 = as.numeric(clms_flt1_new > clms_flt2 | 
+                             clms_flt1_new > clms_flt3 |
+                             clms_flt1_new > clms_flt4 |
+                             clms_flt1_new > clms_flt5 |
+                             clms_flt2 > clms_flt3 |
+                             clms_flt2 > clms_flt4 |
+                             clms_flt2 > clms_flt5 |
+                             clms_flt2 > clms_flt5 |
+                             clms_flt3 > clms_flt4 |
+                             clms_flt3 > clms_flt4 |
+                             clms_flt4 > clms_flt5
+  )
+  ,indicator3 = as.numeric(viol_mnr1 > viol_mnr2 | 
+                             viol_mnr1 > viol_mnr3 |
+                             viol_mnr1 > viol_mnr4 |
+                             viol_mnr1 > viol_mnr5 |
+                             viol_mnr2 > viol_mnr3 |
+                             viol_mnr2 > viol_mnr4 |
+                             viol_mnr2 > viol_mnr5 |
+                             viol_mnr2 > viol_mnr5 |
+                             viol_mnr3 > viol_mnr4 |
+                             viol_mnr3 > viol_mnr4 |
+                             viol_mnr4 > viol_mnr5)
+  ,issues     = as.numeric(viol_mjr1 > viol_mjr2_new) + 
+    as.numeric(viol_mjr1 > viol_mjr3) +
+    as.numeric(viol_mjr1 > viol_mjr4) +
+    as.numeric(viol_mjr1 > viol_mjr5) +
+    as.numeric(viol_mjr2_new > viol_mjr3) +
+    as.numeric(viol_mjr2_new > viol_mjr4) +
+    as.numeric(viol_mjr2_new > viol_mjr5) +
+    as.numeric(viol_mjr2_new > viol_mjr5) +
+    as.numeric(viol_mjr3 > viol_mjr4) +
+    as.numeric(viol_mjr3 > viol_mjr4) +
+    as.numeric(viol_mjr4 > viol_mjr5)
+  ,issues2   = as.numeric(clms_flt1_new > clms_flt2) + 
+    as.numeric(clms_flt1_new > clms_flt3) +
+    as.numeric(clms_flt1_new > clms_flt4) +
+    as.numeric(clms_flt1_new > clms_flt5) +
+    as.numeric(clms_flt2 > clms_flt3) +
+    as.numeric(clms_flt2 > clms_flt4) +
+    as.numeric(clms_flt2 > clms_flt5) +
+    as.numeric(clms_flt2 > clms_flt5) +
+    as.numeric(clms_flt3 > clms_flt4) +
+    as.numeric(clms_flt3 > clms_flt4) +
+    as.numeric(clms_flt4 > clms_flt5)
+  ,issues3   = as.numeric(viol_mnr1 > viol_mnr2) + 
+    as.numeric(viol_mnr1 > viol_mnr3) +
+    as.numeric(viol_mnr1 > viol_mnr4) +
+    as.numeric(viol_mnr1 > viol_mnr5) +
+    as.numeric(viol_mnr2 > viol_mnr3) +
+    as.numeric(viol_mnr2 > viol_mnr4) +
+    as.numeric(viol_mnr2 > viol_mnr5) +
+    as.numeric(viol_mnr2 > viol_mnr5) +
+    as.numeric(viol_mnr3 > viol_mnr4) +
+    as.numeric(viol_mnr3 > viol_mnr4) +
+    as.numeric(viol_mnr4 > viol_mnr5)
+  ,issues4   = as.numeric(clms_naf1 > clms_naf2) + 
+    as.numeric(clms_naf1 > clms_naf3) +
+    as.numeric(clms_naf1 > clms_naf4) +
+    as.numeric(clms_naf1 > clms_naf5) +
+    as.numeric(clms_naf2 > clms_naf3) +
+    as.numeric(clms_naf2 > clms_naf4) +
+    as.numeric(clms_naf2 > clms_naf5) +
+    as.numeric(clms_naf2 > clms_naf5) +
+    as.numeric(clms_naf3 > clms_naf4) +
+    as.numeric(clms_naf3 > clms_naf4) +
+    as.numeric(clms_naf4 > clms_naf5)         
+  ,total_issues = issues + issues2 + issues3 + issues4
+  ,avg_maj_viol = case_when(yrs_licensed == 1 ~ viol_mjr1
+                            ,yrs_licensed == 2 ~ viol_mjr2_new / 2
+                            ,yrs_licensed == 3 ~ viol_mjr3 / 3
+                            ,yrs_licensed == 4 ~ viol_mjr4 / 4
+                            ,yrs_licensed >= 5 ~ viol_mjr5 / 5
+                            ,TRUE ~ 0)
+  ,avg_clms_flt = case_when(yrs_licensed == 1 ~ clms_flt1_new
+                            ,yrs_licensed == 2 ~ clms_flt2 / 2
+                            ,yrs_licensed == 3 ~ clms_flt3 / 3
+                            ,yrs_licensed == 4 ~ clms_flt4 / 4
+                            ,yrs_licensed >= 5 ~ clms_flt5 / 5
+                            ,TRUE ~ 0)
+  ,avg_viol_mnr = case_when(yrs_licensed == 1 ~ viol_mnr1
+                            ,yrs_licensed == 2 ~ viol_mnr2 / 2
+                            ,yrs_licensed == 3 ~ viol_mnr3 / 3
+                            ,yrs_licensed == 4 ~ viol_mnr4 / 4
+                            ,yrs_licensed >= 5 ~ viol_mnr5 / 5
+                            ,TRUE ~ 0)
+  ,avg_clms_naf = case_when(yrs_licensed == 1 ~ clms_naf1
+                            ,yrs_licensed == 2 ~ clms_naf2 / 2
+                            ,yrs_licensed == 3 ~ clms_naf3 / 3
+                            ,yrs_licensed == 4 ~ clms_naf4 / 4
+                            ,yrs_licensed >= 5 ~ clms_naf5 / 5
+                            ,TRUE ~ 0)    
+  ,avg_total    = avg_maj_viol + avg_clms_flt + avg_viol_mnr + avg_clms_naf
+  ,avg_total    = coalesce(avg_total ,0)
+  )
+
+
+```
+
+
+```{r echo=TRUE ,warning=FALSE ,message=FALSE}
+## Plotting the fraud percentage by the # of "issues"
+## Where issues is defined as situations where the "viol_mjr", "clms_flt", "viol_mnr" or "clms_naf" fields
+## with a smaller figure where greater than that of a larger figure
+## i.e. clms_flt1 > clms_flt2 (or clms_flt3 or clms_flt4 or clms_flt5 and so on ....)
+combined_data %>% 
+  group_by(total_issues) %>%
+  summarise(n          = n()
+            ,fraud_ind = sum(fraud_ind)
+            ,fraud_pct = fraud_ind / n) %>%
+  ggplot(aes(x = total_issues ,y = fraud_pct)) +
+    geom_point() +
+    geom_line() +
+    geom_smooth(se = FALSE) +
+    theme_fivethirtyeight()
+
+```
 

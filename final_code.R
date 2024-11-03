@@ -561,7 +561,8 @@ combined_data <- combined_data %>%
          ,acc_month               = month(accident_date_new)
          ,acc_day                 = day(accident_date_new)
          ,acc_day_of_week         = wday(accident_date_new ,label = TRUE) 
-         ,report_date             = accident_date_new + days(report_lag))
+         ,report_date             = accident_date_new + days(report_lag)
+  )
 
 
 ## Date variables that are missing:
@@ -584,7 +585,6 @@ plot_num_bucket <- function(x ,y = 10) {
     labs(title = x) +
     theme_fivethirtyeight()
 }
-
 
 plot_all_levels <- function(x) {
   combined_data %>% 
@@ -781,18 +781,22 @@ combined_data <- combined_data %>%
   ,avg_total    = avg_maj_viol + avg_clms_flt + avg_viol_mnr + avg_clms_naf
   ,avg_total    = coalesce(avg_total ,0)
   )
-# group_by(total_issues) %>% 
+
+## Plotting the fraud percentage by the # of "issues"
+## Where issues is defined as situations where the "viol_mjr", "clms_flt", "viol_mnr" or "clms_naf" fields
+## with a smaller figure where greater than that of a larger figure
+## i.e. clms_flt1 > clms_flt2 (or clms_flt3 or clms_flt4 or clms_flt5 and so on ....)
+# combined_data %>%
+# group_by(total_issues) %>%
 # summarise(n          = n()
 #           ,fraud_ind = sum(fraud_ind)
 #           ,fraud_pct = fraud_ind / n) %>%
-# ggplot(aes(x = total_issues ,y = fraud_pct)) +
-#   geom_point() +
-#   geom_line() +
-#   geom_smooth(se = FALSE) +
-#   theme_fivethirtyeight()
-# ungroup() %>% 
-# na.exclude() %>% 
-# View()
+#   ggplot(aes(x = total_issues ,y = fraud_pct)) +
+#     geom_point() +
+#     geom_line() +
+#     geom_smooth(se = FALSE) +
+#     theme_fivethirtyeight()
+
 
 
 #########################################################
@@ -849,7 +853,7 @@ cv_lasso <- cv.glmnet(x[train ,]
 )
 
 ## Outputting the model so can just read it in from here
-saveRDS(cv_lasso ,file = "cv_lasso.RDS")
+# saveRDS(cv_lasso ,file = "cv_lasso.RDS")
 # cv_lasso <- readRDS("cv_lasso.RDS")
 
 ## Getting the best lambda value
@@ -858,15 +862,9 @@ best_lasso_lamba <- cv_lasso$lambda.min
 ## Getting predictions on the testing data
 test_lasso_pred <- predict(cv_lasso ,s = best_lasso_lamba ,newx = x[-train ,] ,type = "response")
 
-## Going to create a confusion matrix
-model_data %>% 
-  slice(-train) %>% 
-  mutate(lasso_preds = as.numeric(test_lasso_pred[ ,"s1"] > 0.25) %>% factor(levels = c(1 ,0))
-         ,fraud_ind  = fraud_ind %>% factor(levels = c(1 ,0))) %$% 
-  table(fraud_ind ,lasso_preds) %>% 
-  confusionMatrix()
-
-## Sensitivity = 36% which is greater than the 25% requirement
+## Clearing up space
+rm(x)
+rm(y)
 
 ## Want to see the coefficients for the lasso model
 # lasso_model <- glmnet(x[train ,]
@@ -882,26 +880,39 @@ model_data %>%
 #   arrange(desc(abs_value)) %>% 
 #   View()
 
+## Going to create a confusion matrix
+# model_data %>% 
+#   slice(-train) %>% 
+#   mutate(lasso_preds = as.numeric(test_lasso_pred[ ,"s1"] > 0.25) %>% factor(levels = c(1 ,0))
+#          ,fraud_ind  = fraud_ind %>% factor(levels = c(1 ,0))) %$% 
+#   table(fraud_ind ,lasso_preds) %>% 
+#   confusionMatrix()
+
+## Sensitivity = 36% which is greater than the 25% requirement
+
 ## Converting the fraud_ind to a factor so that the randomForest runs a classification and not a regression
+## Removing day of week b/c it was causing issues below due to being an ordinal variable 
 rf_model_data <- model_data %>% 
-  mutate(fraud_ind = as.factor(fraud_ind)) 
+  mutate(fraud_ind = as.factor(fraud_ind)) %>% 
+  select(-contains("day_of_week"))
 
 ## Setting seed for reproducibility
 set.seed(741995)
 
-## Random forest
-## Still ned to work on the xtest & ytest section here
+## Using bagging for a randomForest
 bag_rf <- randomForest(fraud_ind ~ .
                        ,data = rf_model_data[train ,]
-                       # ,xtest = rf_model_data[-train ,-1]
-                       # ,ytest = rf_model_data[-train ,]$fraud_ind
+                       ,xtest = rf_model_data[-train ,-1]
+                       ,ytest = rf_model_data[-train ,]$fraud_ind
                        ,importance = TRUE
+                       ,mtry = 1
 )
 
+
 ## Random forest predictions
-test_rf_pred <- predict(bag_rf 
-                        ,rf_model_data[-train ,]
-)
+test_rf_pred <- bag_rf$test$votes[,"1"]
+
+
 
 length(test_rf_pred)
 summary(bag_rf)
