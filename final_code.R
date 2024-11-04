@@ -17,7 +17,10 @@ library(magrittr)
 library(MASS)
 library(randomForest)
 library(gbm)
+library(BART)
+library(pROC)
 library(tidyverse)
+
 
 ## Turn off scientific notation
 options(scipen = 999)
@@ -860,7 +863,7 @@ cv_lasso <- cv.glmnet(x[train ,]
 best_lasso_lamba <- cv_lasso$lambda.min
 
 ## Getting predictions on the testing data
-test_lasso_pred <- predict(cv_lasso ,s = best_lasso_lamba ,newx = x[-train ,] ,type = "response")
+lasso_preds <- predict(cv_lasso ,s = best_lasso_lamba ,newx = x[-train ,] ,type = "response")
 
 ## Clearing up space
 rm(x)
@@ -899,27 +902,69 @@ rf_model_data <- model_data %>%
 ## Setting seed for reproducibility
 set.seed(741995)
 
-## Using bagging for a randomForest
-bag_rf <- randomForest(fraud_ind ~ .
+## Creating a randomForest
+rf_mod <- randomForest(fraud_ind ~ .
                        ,data = rf_model_data[train ,]
                        ,xtest = rf_model_data[-train ,-1]
                        ,ytest = rf_model_data[-train ,]$fraud_ind
                        ,importance = TRUE
-                       ,mtry = 1
 )
 
 
-## Random forest predictions
-test_rf_pred <- bag_rf$test$votes[,"1"]
+## Random forest predictions for testing dataset
+rf_preds <- rf_mod$test$votes[,"1"]
+
+## Variable Importance
+# varImp(rf_mod) %>% 
+#   as_tibble(rownames = "cols") %>% 
+#   mutate(abs_imp = abs(`1`)) %>% 
+#   rename(imp = `1`) %>% 
+#   select(-`0`) %>% 
+#   arrange(desc(abs_imp)) %>% 
+#   View()
+
+# varImpPlot(rf_mod)
+
+## Trying to create a dataset for the gbm
+gbm_model_data <- rf_model_data %>% 
+  select(-contains("date")) %>% 
+  mutate(fraud_ind = fraud_ind %>% as.character() %>% as.numeric())
+
+## Setting seed for reproducibility
+set.seed(741995)
+
+## Creating a boosted classification model
+boost_model <- gbm(fraud_ind ~ .
+                   ,data = gbm_model_data[train ,]
+                   ,distribution = "bernoulli"
+                   ,n.trees = 5000
+                   ,interaction.depth = 4
+)
+
+## Looking at the results
+# summary(boost_model)
+
+## Getting the boosted predictions
+boost_preds <- predict(boost_model ,newdata = gbm_model_data[-train ,-1] ,type = "response" ,n.trees = 5000)
+
+
+#########################################################
+##  Model Analysis
+#########################################################
+## Plotting all of the AUC's to understand which initial model is performing best
+plot.roc(combined_data[-train ,]$fraud_ind ,lasso_preds[ ,"s1"] ,print.auc = TRUE ,percent = TRUE ,asp = NA)
+plot.roc(combined_data[-train ,]$fraud_ind ,rf_preds ,print.auc = TRUE ,percent = TRUE ,asp = NA)
+plot.roc(combined_data[-train ,]$fraud_ind ,boost_preds ,print.auc = TRUE ,percent = TRUE ,asp = NA)
 
 
 
-length(test_rf_pred)
-summary(bag_rf)
+length(lasso_preds)
+length(rf_preds)
+length(boost_preds)
 
-varImp(bag_rf)
-varImpPlot(bag_rf)
 
+
+## Confusion matrix
 rf_model_data %>% 
   slice(-train) %>% 
   mutate(rf_preds = as.numeric(test_rf_pred[ ,1] > 0.25) %>% factor(levels = c(1 ,0))) %$% 
