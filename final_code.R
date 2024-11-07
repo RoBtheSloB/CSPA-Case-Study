@@ -1,7 +1,9 @@
 #########################################################
 ## Libraries
 #########################################################
+library(MASS)
 library(ggthemes)
+library(writexl)
 library(scales)
 library(knitr)
 library(kableExtra)
@@ -14,7 +16,6 @@ library(leaps)
 library(glmnet)
 library(caret)
 library(magrittr)
-library(MASS)
 library(randomForest)
 library(gbm)
 library(BART)
@@ -167,19 +168,28 @@ combined_data <- unique_claims_data %>%
 #########################################################
 ## Digging into the claim notes to try to text mine/find predictive phrases
 ## Going to separate the notes by sentence
-separated_claim_data <- combined_data %>% 
-  select(claim_id ,claim_notes) %>% 
-  separate_wider_delim(claim_notes 
-                       ,delim = "." 
-                       ,names_sep = "_"
-                       ,too_few = "align_start"
-  ) %>% 
-  mutate_at(vars(contains("claim_notes")) ,str_trim) %>% 
-  mutate_at(vars(contains("claim_notes")) ,function(x) {if_else(x == "" ,NA ,x)})
+## Using a function so it can be applied to the assessment as well as training datasets
+separate_claim_notes <- function(x) {
+  x %>%
+    select(claim_id ,claim_notes) %>% 
+    separate_wider_delim(claim_notes 
+                         ,delim = "." 
+                         ,names_sep = "_"
+                         ,too_few = "align_start") %>% 
+    mutate_at(vars(contains("claim_notes")) ,str_trim) %>% 
+    mutate_at(vars(contains("claim_notes")) ,function(x) {if_else(x == "" ,NA ,x)})    
+}
 
-## Joining the notes back onto the original dataset
+
+separated_claim_data <- combined_data %>% separate_claim_notes()
+separated_assessment_claim_data <- raw_assessment_data %>% separate_claim_notes()
+
+## Joining the notes back onto the original datasets
 combined_data <- combined_data %>% 
   left_join(separated_claim_data ,by = "claim_id")
+
+assessment_data <- raw_assessment_data %>% 
+  left_join(separated_assessment_claim_data ,by = "claim_id")
 
 ## Going to see how variables are correlated with fraud
 check_fraud_pct <- function(x) {
@@ -222,87 +232,92 @@ check_fraud_pct <- function(x) {
 ## All blanks for claim_notes_6 - can probably just be discarded
 
 ## Going to start with breaking down each of the claim notes
-combined_data <- combined_data %>% 
-  # select(claim_notes_1) %>% 
-  mutate(note_type_1            = str_sub(claim_notes_1
-                                          ,end = str_locate(claim_notes_1 ,pattern = ":")[,1])
-         ,note_vehicle_1        = str_sub(claim_notes_1
-                                          ,start = str_locate(claim_notes_1 ,pattern = "\\(")[,"start"]
-                                          ,end = str_locate(claim_notes_1 ,pattern = "\\)")[,"start"]
-         ) %>% 
-           str_remove_all(pattern = "\\(|\\)") %>% 
-           str_trim()
-         ,fraud_ind_1           = str_extract(note_type_1 %>% 
-                                                str_replace(pattern = "Frauuuuud" ,replacement = "Fraud") %>% 
-                                                tolower()
-                                              ,pattern = "fraud\\s*(\\S+)")
-         ,pedestrian_flag_2     = str_extract(claim_notes_2 %>% tolower()
-                                              ,pattern = "cyclist|pedestrian") %>% 
-           coalesce("Other")
-         ,injury_type_2         = str_extract(claim_notes_2 %>% tolower() 
-                                              ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries")
-         ,injury_level_2        = str_extract(claim_notes_2 %>% tolower() 
-                                              ,pattern = "(\\S+)\\s*(?=damage)|(\\S+)\\s*(?=injuries)")
-         ,injury_vs_damage_2    = str_extract(claim_notes_2 %>% tolower() 
-                                              ,pattern = "damage|injuries")
-         ,fraud_ind_2           = str_extract(claim_notes_2 %>% 
-                                                tolower() %>% 
-                                                str_replace(pattern = "frauuuuud" ,replacement = "fraud")
-                                              ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud")
-         ,injury_type_3         = str_extract(claim_notes_3 %>% tolower() 
-                                              ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries|injuries reported")
-         ,injury_level_3        = str_extract(claim_notes_3 %>% tolower() 
-                                              ,pattern = "(\\S+)\\s*(?=damage)|(\\S+)\\s*(?=injuries)")
-         ,injury_vs_damage_3    = str_extract(claim_notes_3 %>% tolower() 
-                                              ,pattern = "damage|injuries")         
-         ,police_type_3         = str_extract(claim_notes_3 %>% tolower() 
-                                              ,pattern = "police and medical assistance|police\\s*(\\S+)")
-         ,triple_exclamation_3  = as.numeric(str_detect(claim_notes_3 ,pattern = "^!!!$"))
-         ,fraud_ind_3           = str_extract(claim_notes_3 %>% 
-                                                tolower() %>% 
-                                                str_replace(pattern = "frauuuuud" ,replacement = "fraud")
-                                              ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud")
-         ,police_type_4         = str_extract(claim_notes_4 %>% tolower() 
-                                              ,pattern = "police and medical assistance|police\\s*(\\S+)|officer on site")
-         ,alcohol_or_drugs_4    = str_extract(claim_notes_4 %>% tolower()
-                                              ,pattern = "alcohol or drugs suspected")
-         ,triple_exclamation_4  = as.numeric(str_detect(claim_notes_4 ,pattern = "^!!!$"))
-         ,fraud_ind_4           = str_extract(claim_notes_4 %>% 
-                                                tolower() %>% 
-                                                str_replace(pattern = "frauuuuud" ,replacement = "fraud")
-                                              ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud|no signs of fraud")
-         ,alcohol_or_drugs_5    = str_extract(claim_notes_5 %>% tolower()
-                                              ,pattern = "alcohol or drugs suspected")
-         ,triple_exclamation_5  = as.numeric(str_detect(claim_notes_5 ,pattern = "^!!!$"))
-         ,fraud_ind_5           = str_extract(claim_notes_5 %>% 
-                                                tolower() %>% 
-                                                str_replace(pattern = "frauuuuud" ,replacement = "fraud")
-                                              ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud|no signs of fraud")
-         ,note_type             = note_type_1 %>% 
-           str_replace(pattern = "Frauuuuud|frauuuuud" ,replacement = "Fraud")
-         ,vehicle_mismatch_flag = as.numeric(str_c(make ," " ,model) != note_vehicle_1)
-         ,pedestrian_type       = pedestrian_flag_2
-         ,injury_type           = if_else(!is.na(injury_type_2) & !is.na(injury_type_3)
-                                          ,str_c(injury_type_2 ," and " ,injury_type_3)
-                                          ,coalesce(injury_type_2 ,injury_type_3))
-         ,police_type           = coalesce(police_type_3 ,police_type_4)
-         ,alcohol_or_drugs      = coalesce(alcohol_or_drugs_4 ,alcohol_or_drugs_5)
-         ,triple_exclamation    = as.numeric(coalesce(triple_exclamation_3 ,0) + coalesce(triple_exclamation_4 ,0) 
-                                             + coalesce(triple_exclamation_5 ,0))
-         ,fraud_note_ind        = if_else(!is.na(fraud_ind_1) & !is.na(fraud_ind_2) 
-                                          ,str_c(fraud_ind_1 ," " ,fraud_ind_2)
-                                          ,coalesce(fraud_ind_1 ,fraud_ind_2 ,fraud_ind_3 ,fraud_ind_4 ,fraud_ind_5
-                                                    ,"no mention of fraud")
-         )
-         ,fraud_note_ind        = if_else(str_detect(fraud_note_ind ,pattern = "susp")
-                                          ,"suspected fraud"
-                                          ,fraud_note_ind
-         ) %>% 
-           factor(levels = c('no mention of fraud' ,'no signs of fraud' 
-                             ,'probably not fraud' ,'suspected fraud' ,'fraud'))
-  ) %>% 
-  select(-matches("_[0-9]$"))
+## Using function so it can be applied to both the assessment and training data
+claim_breakdown <- function(x) {
+  x %>% 
+    mutate(note_type_1            = str_sub(claim_notes_1
+                                            ,end = str_locate(claim_notes_1 ,pattern = ":")[,1])
+           ,note_vehicle_1        = str_sub(claim_notes_1
+                                            ,start = str_locate(claim_notes_1 ,pattern = "\\(")[,"start"]
+                                            ,end = str_locate(claim_notes_1 ,pattern = "\\)")[,"start"]
+           ) %>% 
+             str_remove_all(pattern = "\\(|\\)") %>% 
+             str_trim()
+           ,fraud_ind_1           = str_extract(note_type_1 %>% 
+                                                  str_replace(pattern = "Frauuuuud" ,replacement = "Fraud") %>% 
+                                                  tolower()
+                                                ,pattern = "fraud\\s*(\\S+)")
+           ,pedestrian_flag_2     = str_extract(claim_notes_2 %>% tolower()
+                                                ,pattern = "cyclist|pedestrian") %>% 
+             coalesce("Other")
+           ,injury_type_2         = str_extract(claim_notes_2 %>% tolower() 
+                                                ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries")
+           ,injury_level_2        = str_extract(claim_notes_2 %>% tolower() 
+                                                ,pattern = "(\\S+)\\s*(?=damage)|(\\S+)\\s*(?=injuries)")
+           ,injury_vs_damage_2    = str_extract(claim_notes_2 %>% tolower() 
+                                                ,pattern = "damage|injuries")
+           ,fraud_ind_2           = str_extract(claim_notes_2 %>% 
+                                                  tolower() %>% 
+                                                  str_replace(pattern = "frauuuuud" ,replacement = "fraud")
+                                                ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud")
+           ,injury_type_3         = str_extract(claim_notes_3 %>% tolower() 
+                                                ,pattern = "(\\S+)\\s*damage|(\\S+)\\s*injuries|injuries reported")
+           ,injury_level_3        = str_extract(claim_notes_3 %>% tolower() 
+                                                ,pattern = "(\\S+)\\s*(?=damage)|(\\S+)\\s*(?=injuries)")
+           ,injury_vs_damage_3    = str_extract(claim_notes_3 %>% tolower() 
+                                                ,pattern = "damage|injuries")         
+           ,police_type_3         = str_extract(claim_notes_3 %>% tolower() 
+                                                ,pattern = "police and medical assistance|police\\s*(\\S+)")
+           ,triple_exclamation_3  = as.numeric(str_detect(claim_notes_3 ,pattern = "^!!!$"))
+           ,fraud_ind_3           = str_extract(claim_notes_3 %>% 
+                                                  tolower() %>% 
+                                                  str_replace(pattern = "frauuuuud" ,replacement = "fraud")
+                                                ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud")
+           ,police_type_4         = str_extract(claim_notes_4 %>% tolower() 
+                                                ,pattern = "police and medical assistance|police\\s*(\\S+)|officer on site")
+           ,alcohol_or_drugs_4    = str_extract(claim_notes_4 %>% tolower()
+                                                ,pattern = "alcohol or drugs suspected")
+           ,triple_exclamation_4  = as.numeric(str_detect(claim_notes_4 ,pattern = "^!!!$"))
+           ,fraud_ind_4           = str_extract(claim_notes_4 %>% 
+                                                  tolower() %>% 
+                                                  str_replace(pattern = "frauuuuud" ,replacement = "fraud")
+                                                ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud|no signs of fraud")
+           ,alcohol_or_drugs_5    = str_extract(claim_notes_5 %>% tolower()
+                                                ,pattern = "alcohol or drugs suspected")
+           ,triple_exclamation_5  = as.numeric(str_detect(claim_notes_5 ,pattern = "^!!!$"))
+           ,fraud_ind_5           = str_extract(claim_notes_5 %>% 
+                                                  tolower() %>% 
+                                                  str_replace(pattern = "frauuuuud" ,replacement = "fraud")
+                                                ,pattern = "(\\S+)\\s*(\\S+)\\s*fraud|fraud|no signs of fraud")
+           ,note_type             = note_type_1 %>% 
+             str_replace(pattern = "Frauuuuud|frauuuuud" ,replacement = "Fraud")
+           ,vehicle_mismatch_flag = as.numeric(str_c(make ," " ,model) != note_vehicle_1)
+           ,pedestrian_type       = pedestrian_flag_2
+           ,injury_type           = if_else(!is.na(injury_type_2) & !is.na(injury_type_3)
+                                            ,str_c(injury_type_2 ," and " ,injury_type_3)
+                                            ,coalesce(injury_type_2 ,injury_type_3))
+           ,police_type           = coalesce(police_type_3 ,police_type_4)
+           ,alcohol_or_drugs      = coalesce(alcohol_or_drugs_4 ,alcohol_or_drugs_5)
+           ,triple_exclamation    = as.numeric(coalesce(triple_exclamation_3 ,0) + coalesce(triple_exclamation_4 ,0) 
+                                               + coalesce(triple_exclamation_5 ,0)) %>% 
+                                      as.factor()
+           ,fraud_note_ind        = if_else(!is.na(fraud_ind_1) & !is.na(fraud_ind_2) 
+                                            ,str_c(fraud_ind_1 ," " ,fraud_ind_2)
+                                            ,coalesce(fraud_ind_1 ,fraud_ind_2 ,fraud_ind_3 ,fraud_ind_4 ,fraud_ind_5
+                                                      ,"no mention of fraud")
+                                            )
+           ,fraud_note_ind        = if_else(str_detect(fraud_note_ind ,pattern = "susp")
+                                            ,"suspected fraud"
+                                            ,fraud_note_ind) %>% 
+                                      factor(levels = c('no mention of fraud' ,'no signs of fraud' 
+                                                        ,'probably not fraud' ,'suspected fraud' ,'fraud'))
+           ) %>% 
+    select(-matches("_[0-9]$"))
+}
 
+
+combined_data <- combined_data %>% claim_breakdown()
+assessment_data <- assessment_data %>% claim_breakdown()
 
 # check_fraud_pct("note_type") ## Potentially useful ... although may be duplicative with fraud_note_ind
 # check_fraud_pct("vehicle_mismatch_flag") ## Not useful, remove
@@ -317,6 +332,9 @@ combined_data <- combined_data %>%
 ## Thought there would be instances where the claim notes vehicle doesn't match (which could indicate fraud)
 ## Turns out there aren't  --> remove column
 combined_data <- combined_data %>% 
+  select(-vehicle_mismatch_flag)
+
+assessment_data <- assessment_data %>% 
   select(-vehicle_mismatch_flag)
 
 #########################################################
@@ -408,19 +426,28 @@ check_fraud_pct_num2 <- function(x) {
 ## 4) Braking_Mile
 ## 5) Left_Mile
 
-
 ## Fixing the columns that were identified as having issues above
-combined_data <- combined_data %>% 
-  mutate(num_drivers_new      = na_if(num_drivers ,17)
-         ,clms_flt1_new       = na_if(clms_flt1 ,17)
-         ,late_90d_new        = na_if(late_90d ,500)
-         ,outs_bal_new        = na_if(outs_bal ,99)
-         ,viol_mjr2_new       = na_if(viol_mjr2 ,17)
-         ,time_bet10pm2am_new = na_if(time_bet10pm2am ,0.75)
-         ,credit_score_new    = na_if(credit_score ,1.5)
-         ,report_lag_new      = na_if(report_lag ,99)
-         ,pop_density         = na_if(pop_density ,5) %>% as.factor()
-  )
+## The assessment data doesn't seem to have many of these same issues but running for consistency
+## First converting the assessment data to numeric to align with the training data
+assessment_data <- assessment_data %>% 
+  mutate(pop_density = pop_density %>% as.character() %>% as.numeric())
+
+clean_numeric_vars <- function(x) {
+  x %>% 
+    mutate(num_drivers_new      = na_if(num_drivers ,17)
+           ,clms_flt1_new       = na_if(clms_flt1 ,17)
+           ,late_90d_new        = na_if(late_90d ,500)
+           ,outs_bal_new        = na_if(outs_bal ,99)
+           ,viol_mjr2_new       = na_if(viol_mjr2 ,17)
+           ,time_bet10pm2am_new = na_if(time_bet10pm2am ,0.75)
+           ,credit_score_new    = na_if(credit_score ,1.5)
+           ,report_lag_new      = na_if(report_lag ,99)
+           ,pop_density         = na_if(pop_density ,5) %>% as.factor()
+    )
+}
+
+combined_data <- combined_data %>% clean_numeric_vars()
+assessment_data <- assessment_data %>% clean_numeric_vars()
 
 
 #########################################################
@@ -450,54 +477,57 @@ combined_data <- combined_data %>%
 # check_fraud_pct_num2("alcohol_or_drugs") ## Could be somewhat useful?
 
 ## Fixing the inconsistent character fields
-combined_data <- combined_data %>% 
-  mutate(gender_new                = case_when(gender %in% c('Boy' ,'M' ,'Male') ~ 'Male'
-                                               ,gender %in% c('F' ,'Female' ,'Girl') ~ 'Female') %>% 
-           factor(levels = c('Male' ,'Female'))
-         ,education_new            = factor(education ,levels = c('Some High School' ,'High School or GED'
-                                                                  ,'Bachelors' ,'Masters' ,'Doctorate'))
-         ,limits_new               = str_replace_all(limits ,pattern = "k" ,replacement = "000") %>% 
-           str_replace_all(pattern = "000$" ,replacement = "k") %>% 
-           factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"200k" ,"250k" ,"300k" ,"500k"))
-         ,limits_numeric           = limits_new %>% 
-           str_replace(pattern = "k" ,replacement = "000") %>% 
-           as.numeric()
-         ,marital_status_new       = case_when(marital_status %in% c('M' ,'Marr' ,'Married') ~ 'Married'
-                                               ,marital_status %in% c('S' ,'Single') ~ 'Single') %>% 
-           as.factor()
-         ,num_cars_new             = case_when(num_cars == "Four" ~ "4"
-                                               ,num_cars == "Three" ~ "3"
-                                               ,num_cars == "Two" ~ "2"
-                                               ,TRUE ~ num_cars
-         ) %>% 
-           as.factor()
-         ,num_cars_band_new        = case_when(num_cars  == "1" ~ "1"
-                                               ,num_cars == "2" ~ "2"
-                                               ,num_cars == "3" ~ "3"
-                                               ,num_cars == "4" ~ "4"
-                                               ,TRUE ~ "5+") %>% 
-           as.factor()         
-         ,seat_belt_new            = seat_belt %>%
-           factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
-                             ,'Unknown'))
-         ,income_new               = case_when(income %in% c('Mid' ,'Middle') ~ 'Middle'
-                                               ,income %in% c('Working' ,'Wrk') ~ 'Working'
-                                               ,TRUE ~ income) %>% 
-           factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
-         ,note_type_new            = case_when(!(note_type %in% c(":" ,"Fraud Suspected:" ,"Hit-and-run incident:")) ~ "All Other"
-                                               ,TRUE ~ note_type
-         ) %>% 
-           factor(levels = c(":" ,"All Other" ,"Hit-and-run incident:" ,"Fraud Suspected:"))
-         ,pedestrian_type_new      = pedestrian_type %>% tolower() %>% factor(levels = c("other" ,"cyclist" ,"pedestrian"))
-         ,injury_type_new          = injury_type %>% as.factor()
-         ,police_type_new          = police_type %>% 
-           coalesce("no mention of police") %>% 
-           factor(levels = c("officer on site" ,"police report" 
-                             ,"police and medical assistance"
-                             ,"police notified" ,"no mention of police"))
-         ,alcohol_or_drugs_new     = alcohol_or_drugs %>% coalesce("All Other") %>% as.factor()
-         ,claim_greater_than_limit = as.numeric(claimamount > limits_numeric)
-  ) 
+clean_character_vars <- function(x) {
+  x %>% 
+    mutate(gender_new                = case_when(gender %in% c('Boy' ,'M' ,'Male') ~ 'Male'
+                                                 ,gender %in% c('F' ,'Female' ,'Girl') ~ 'Female') %>% 
+                                         factor(levels = c('Male' ,'Female'))
+           ,education_new            = factor(education ,levels = c('Some High School' ,'High School or GED'
+                                                                    ,'Bachelors' ,'Masters' ,'Doctorate'))
+           ,limits_new               = str_replace_all(limits ,pattern = "k" ,replacement = "000") %>% 
+                                         str_replace_all(pattern = "000$" ,replacement = "k") %>% 
+                                         factor(levels = c("15k" ,"20k" ,"25k" ,"50k" ,"100k" ,"200k" ,"250k" ,"300k" ,"500k"))
+           ,limits_numeric           = limits_new %>% 
+                                         str_replace(pattern = "k" ,replacement = "000") %>% 
+                                         as.numeric()
+           ,marital_status_new       = case_when(marital_status %in% c('M' ,'Marr' ,'Married') ~ 'Married'
+                                                 ,marital_status %in% c('S' ,'Single') ~ 'Single') %>% 
+                                         as.factor()
+           ,num_cars_new             = case_when(num_cars == "Four" ~ "4"
+                                                 ,num_cars == "Three" ~ "3"
+                                                 ,num_cars == "Two" ~ "2"
+                                                 ,TRUE ~ num_cars) %>% 
+                                         as.factor()
+           ,num_cars_band_new        = case_when(num_cars  == "1" ~ "1"
+                                                 ,num_cars == "2" ~ "2"
+                                                 ,num_cars == "3" ~ "3"
+                                                 ,num_cars == "4" ~ "4"
+                                                 ,TRUE ~ "5+") %>% 
+                                         as.factor()         
+           ,seat_belt_new            = seat_belt %>%
+                                         factor(levels = c('Never' ,'Rarely' ,'Occasionally' ,'Usually' ,'Always' 
+                                                           ,'Unknown'))
+           ,income_new               = case_when(income %in% c('Mid' ,'Middle') ~ 'Middle'
+                                                 ,income %in% c('Working' ,'Wrk') ~ 'Working'
+                                                 ,TRUE ~ income) %>% 
+                                         factor(levels = c('Poverty' ,'Working' ,'Middle' ,'Upper'))
+           ,note_type_new            = case_when(!(note_type %in% c(":" ,"Fraud Suspected:" ,"Hit-and-run incident:")) ~ "All Other"
+                                                 ,TRUE ~ note_type) %>% 
+                                         factor(levels = c(":" ,"All Other" ,"Hit-and-run incident:" ,"Fraud Suspected:"))
+           ,pedestrian_type_new      = pedestrian_type %>% tolower() %>% factor(levels = c("other" ,"cyclist" ,"pedestrian"))
+           ,injury_type_new          = injury_type %>% as.factor()
+           ,police_type_new          = police_type %>% 
+                                         coalesce("no mention of police") %>% 
+                                         factor(levels = c("officer on site" ,"police report" 
+                                                           ,"police and medical assistance"
+                                                           ,"police notified" ,"no mention of police"))
+           ,alcohol_or_drugs_new     = alcohol_or_drugs %>% coalesce("All Other") %>% as.factor()
+           ,claim_greater_than_limit = as.numeric(claimamount > limits_numeric)
+    )    
+}
+
+combined_data <- combined_data %>% clean_character_vars()
+assessment_data <- assessment_data %>% clean_character_vars()
 
 ## Confirming the new fields are looking better
 # check_fraud_pct_num2("gender_new")
@@ -517,6 +547,9 @@ combined_data <- combined_data %>%
 ## Fixing the columns that were identified as having issues above
 combined_data <- combined_data %>% 
   mutate(num_cars_new = na_if(num_cars_new ,"17"))
+
+## Not applying to assessment data because it does not have this 17 issue 
+## And since num_cars_new is a factor this would cause an error
 
 
 #########################################################
@@ -555,18 +588,25 @@ combined_data <- combined_data %>%
 ## Confirmed
 
 ## Converting to dates
-combined_data <- combined_data %>% 
-  mutate(policy_orig_eff_date_new = ymd(policy_orig_eff_date)
-         ,accident_date_new       = ymd(accident_date)
-         ,policy_month            = month(policy_orig_eff_date_new)
-         ,policy_day              = day(policy_orig_eff_date_new)
-         ,policy_day_of_week      = wday(policy_orig_eff_date_new ,label = TRUE)
-         ,acc_month               = month(accident_date_new)
-         ,acc_day                 = day(accident_date_new)
-         ,acc_day_of_week         = wday(accident_date_new ,label = TRUE) 
-         ,report_date             = accident_date_new + days(report_lag)
-  )
+clean_date_vars <- function(x) {
+  x %>%
+    mutate(policy_orig_eff_date_new = ymd(policy_orig_eff_date)
+           ,accident_date_new       = ymd(accident_date)
+           ,policy_month            = month(policy_orig_eff_date_new)
+           ,policy_day              = day(policy_orig_eff_date_new)
+           ,policy_day_of_week      = wday(policy_orig_eff_date_new ,label = TRUE)
+           ,acc_month               = month(accident_date_new)
+           ,acc_day                 = day(accident_date_new)
+           ,acc_day_of_week         = wday(accident_date_new ,label = TRUE) 
+           ,report_date             = accident_date_new + days(report_lag))    
+}
 
+combined_data <- combined_data %>% clean_date_vars()
+assessment_data <- assessment_data %>% clean_date_vars()
+
+## The parsing errors are caused by "fake" dates (like February 30th)
+## Going to move forward with NA's due to it not seeming predictive 
+## and there being so few rows with this issue
 
 ## Date variables that are missing:
 ## 1) Report_date - re-created it with the report lag
@@ -675,115 +715,118 @@ plot_x_y_vars <- function(x , y) {
 ## where the number of historical at-fault claims in the past # year(s) for the insured
 ## would be greater than the historical at-fault claims in the past (#-1) year(s)
 
-## Going to create an indicator    
-combined_data <- combined_data %>% 
-  mutate(indicator   = as.numeric(viol_mjr1 > viol_mjr2_new | 
-                                    viol_mjr1 > viol_mjr3 |
-                                    viol_mjr1 > viol_mjr4 |
-                                    viol_mjr1 > viol_mjr5 |
-                                    viol_mjr2_new > viol_mjr3 |
-                                    viol_mjr2_new > viol_mjr4 |
-                                    viol_mjr2_new > viol_mjr5 |
-                                    viol_mjr2_new > viol_mjr5 |
-                                    viol_mjr3 > viol_mjr4 |
-                                    viol_mjr3 > viol_mjr4 |
-                                    viol_mjr4 > viol_mjr5
-  )
-  ,indicator2 = as.numeric(clms_flt1_new > clms_flt2 | 
-                             clms_flt1_new > clms_flt3 |
-                             clms_flt1_new > clms_flt4 |
-                             clms_flt1_new > clms_flt5 |
-                             clms_flt2 > clms_flt3 |
-                             clms_flt2 > clms_flt4 |
-                             clms_flt2 > clms_flt5 |
-                             clms_flt2 > clms_flt5 |
-                             clms_flt3 > clms_flt4 |
-                             clms_flt3 > clms_flt4 |
-                             clms_flt4 > clms_flt5
-  )
-  ,indicator3 = as.numeric(viol_mnr1 > viol_mnr2 | 
-                             viol_mnr1 > viol_mnr3 |
-                             viol_mnr1 > viol_mnr4 |
-                             viol_mnr1 > viol_mnr5 |
-                             viol_mnr2 > viol_mnr3 |
-                             viol_mnr2 > viol_mnr4 |
-                             viol_mnr2 > viol_mnr5 |
-                             viol_mnr2 > viol_mnr5 |
-                             viol_mnr3 > viol_mnr4 |
-                             viol_mnr3 > viol_mnr4 |
-                             viol_mnr4 > viol_mnr5)
-  ,issues     = as.numeric(viol_mjr1 > viol_mjr2_new) + 
-    as.numeric(viol_mjr1 > viol_mjr3) +
-    as.numeric(viol_mjr1 > viol_mjr4) +
-    as.numeric(viol_mjr1 > viol_mjr5) +
-    as.numeric(viol_mjr2_new > viol_mjr3) +
-    as.numeric(viol_mjr2_new > viol_mjr4) +
-    as.numeric(viol_mjr2_new > viol_mjr5) +
-    as.numeric(viol_mjr2_new > viol_mjr5) +
-    as.numeric(viol_mjr3 > viol_mjr4) +
-    as.numeric(viol_mjr3 > viol_mjr4) +
-    as.numeric(viol_mjr4 > viol_mjr5)
-  ,issues2   = as.numeric(clms_flt1_new > clms_flt2) + 
-    as.numeric(clms_flt1_new > clms_flt3) +
-    as.numeric(clms_flt1_new > clms_flt4) +
-    as.numeric(clms_flt1_new > clms_flt5) +
-    as.numeric(clms_flt2 > clms_flt3) +
-    as.numeric(clms_flt2 > clms_flt4) +
-    as.numeric(clms_flt2 > clms_flt5) +
-    as.numeric(clms_flt2 > clms_flt5) +
-    as.numeric(clms_flt3 > clms_flt4) +
-    as.numeric(clms_flt3 > clms_flt4) +
-    as.numeric(clms_flt4 > clms_flt5)
-  ,issues3   = as.numeric(viol_mnr1 > viol_mnr2) + 
-    as.numeric(viol_mnr1 > viol_mnr3) +
-    as.numeric(viol_mnr1 > viol_mnr4) +
-    as.numeric(viol_mnr1 > viol_mnr5) +
-    as.numeric(viol_mnr2 > viol_mnr3) +
-    as.numeric(viol_mnr2 > viol_mnr4) +
-    as.numeric(viol_mnr2 > viol_mnr5) +
-    as.numeric(viol_mnr2 > viol_mnr5) +
-    as.numeric(viol_mnr3 > viol_mnr4) +
-    as.numeric(viol_mnr3 > viol_mnr4) +
-    as.numeric(viol_mnr4 > viol_mnr5)
-  ,issues4   = as.numeric(clms_naf1 > clms_naf2) + 
-    as.numeric(clms_naf1 > clms_naf3) +
-    as.numeric(clms_naf1 > clms_naf4) +
-    as.numeric(clms_naf1 > clms_naf5) +
-    as.numeric(clms_naf2 > clms_naf3) +
-    as.numeric(clms_naf2 > clms_naf4) +
-    as.numeric(clms_naf2 > clms_naf5) +
-    as.numeric(clms_naf2 > clms_naf5) +
-    as.numeric(clms_naf3 > clms_naf4) +
-    as.numeric(clms_naf3 > clms_naf4) +
-    as.numeric(clms_naf4 > clms_naf5)         
-  ,total_issues = issues + issues2 + issues3 + issues4
-  ,avg_maj_viol = case_when(yrs_licensed == 1 ~ viol_mjr1
-                            ,yrs_licensed == 2 ~ viol_mjr2_new / 2
-                            ,yrs_licensed == 3 ~ viol_mjr3 / 3
-                            ,yrs_licensed == 4 ~ viol_mjr4 / 4
-                            ,yrs_licensed >= 5 ~ viol_mjr5 / 5
-                            ,TRUE ~ 0)
-  ,avg_clms_flt = case_when(yrs_licensed == 1 ~ clms_flt1_new
-                            ,yrs_licensed == 2 ~ clms_flt2 / 2
-                            ,yrs_licensed == 3 ~ clms_flt3 / 3
-                            ,yrs_licensed == 4 ~ clms_flt4 / 4
-                            ,yrs_licensed >= 5 ~ clms_flt5 / 5
-                            ,TRUE ~ 0)
-  ,avg_viol_mnr = case_when(yrs_licensed == 1 ~ viol_mnr1
-                            ,yrs_licensed == 2 ~ viol_mnr2 / 2
-                            ,yrs_licensed == 3 ~ viol_mnr3 / 3
-                            ,yrs_licensed == 4 ~ viol_mnr4 / 4
-                            ,yrs_licensed >= 5 ~ viol_mnr5 / 5
-                            ,TRUE ~ 0)
-  ,avg_clms_naf = case_when(yrs_licensed == 1 ~ clms_naf1
-                            ,yrs_licensed == 2 ~ clms_naf2 / 2
-                            ,yrs_licensed == 3 ~ clms_naf3 / 3
-                            ,yrs_licensed == 4 ~ clms_naf4 / 4
-                            ,yrs_licensed >= 5 ~ clms_naf5 / 5
-                            ,TRUE ~ 0)    
-  ,avg_total    = avg_maj_viol + avg_clms_flt + avg_viol_mnr + avg_clms_naf
-  ,avg_total    = coalesce(avg_total ,0)
-  )
+## Going to create an indicator   
+create_indicator_cols <- function(x) {
+  x %>% 
+    mutate(indicator   = as.numeric(viol_mjr1 > viol_mjr2_new | 
+                                      viol_mjr1 > viol_mjr3 |
+                                      viol_mjr1 > viol_mjr4 |
+                                      viol_mjr1 > viol_mjr5 |
+                                      viol_mjr2_new > viol_mjr3 |
+                                      viol_mjr2_new > viol_mjr4 |
+                                      viol_mjr2_new > viol_mjr5 |
+                                      viol_mjr2_new > viol_mjr5 |
+                                      viol_mjr3 > viol_mjr4 |
+                                      viol_mjr3 > viol_mjr4 |
+                                      viol_mjr4 > viol_mjr5)
+    ,indicator2 = as.numeric(clms_flt1_new > clms_flt2 | 
+                               clms_flt1_new > clms_flt3 |
+                               clms_flt1_new > clms_flt4 |
+                               clms_flt1_new > clms_flt5 |
+                               clms_flt2 > clms_flt3 |
+                               clms_flt2 > clms_flt4 |
+                               clms_flt2 > clms_flt5 |
+                               clms_flt2 > clms_flt5 |
+                               clms_flt3 > clms_flt4 |
+                               clms_flt3 > clms_flt4 |
+                               clms_flt4 > clms_flt5)
+    ,indicator3 = as.numeric(viol_mnr1 > viol_mnr2 | 
+                               viol_mnr1 > viol_mnr3 |
+                               viol_mnr1 > viol_mnr4 |
+                               viol_mnr1 > viol_mnr5 |
+                               viol_mnr2 > viol_mnr3 |
+                               viol_mnr2 > viol_mnr4 |
+                               viol_mnr2 > viol_mnr5 |
+                               viol_mnr2 > viol_mnr5 |
+                               viol_mnr3 > viol_mnr4 |
+                               viol_mnr3 > viol_mnr4 |
+                               viol_mnr4 > viol_mnr5)
+    ,issues     = as.numeric(viol_mjr1 > viol_mjr2_new) + 
+                   as.numeric(viol_mjr1 > viol_mjr3) +
+                   as.numeric(viol_mjr1 > viol_mjr4) +
+                   as.numeric(viol_mjr1 > viol_mjr5) +
+                   as.numeric(viol_mjr2_new > viol_mjr3) +
+                   as.numeric(viol_mjr2_new > viol_mjr4) +
+                   as.numeric(viol_mjr2_new > viol_mjr5) +
+                   as.numeric(viol_mjr2_new > viol_mjr5) +
+                   as.numeric(viol_mjr3 > viol_mjr4) +
+                   as.numeric(viol_mjr3 > viol_mjr4) +
+                   as.numeric(viol_mjr4 > viol_mjr5)
+    ,issues2   = as.numeric(clms_flt1_new > clms_flt2) + 
+                   as.numeric(clms_flt1_new > clms_flt3) +
+                   as.numeric(clms_flt1_new > clms_flt4) +
+                   as.numeric(clms_flt1_new > clms_flt5) +
+                   as.numeric(clms_flt2 > clms_flt3) +
+                   as.numeric(clms_flt2 > clms_flt4) +
+                   as.numeric(clms_flt2 > clms_flt5) +
+                   as.numeric(clms_flt2 > clms_flt5) +
+                   as.numeric(clms_flt3 > clms_flt4) +
+                   as.numeric(clms_flt3 > clms_flt4) +
+                   as.numeric(clms_flt4 > clms_flt5)
+    ,issues3   = as.numeric(viol_mnr1 > viol_mnr2) + 
+                   as.numeric(viol_mnr1 > viol_mnr3) +
+                   as.numeric(viol_mnr1 > viol_mnr4) +
+                   as.numeric(viol_mnr1 > viol_mnr5) +
+                   as.numeric(viol_mnr2 > viol_mnr3) +
+                   as.numeric(viol_mnr2 > viol_mnr4) +
+                   as.numeric(viol_mnr2 > viol_mnr5) +
+                   as.numeric(viol_mnr2 > viol_mnr5) +
+                   as.numeric(viol_mnr3 > viol_mnr4) +
+                   as.numeric(viol_mnr3 > viol_mnr4) +
+                   as.numeric(viol_mnr4 > viol_mnr5)
+    ,issues4   = as.numeric(clms_naf1 > clms_naf2) + 
+                   as.numeric(clms_naf1 > clms_naf3) +
+                   as.numeric(clms_naf1 > clms_naf4) +
+                   as.numeric(clms_naf1 > clms_naf5) +
+                   as.numeric(clms_naf2 > clms_naf3) +
+                   as.numeric(clms_naf2 > clms_naf4) +
+                   as.numeric(clms_naf2 > clms_naf5) +
+                   as.numeric(clms_naf2 > clms_naf5) +
+                   as.numeric(clms_naf3 > clms_naf4) +
+                   as.numeric(clms_naf3 > clms_naf4) +
+                   as.numeric(clms_naf4 > clms_naf5)         
+    ,total_issues = issues + issues2 + issues3 + issues4
+    ,avg_maj_viol = case_when(yrs_licensed == 1 ~ viol_mjr1
+                              ,yrs_licensed == 2 ~ viol_mjr2_new / 2
+                              ,yrs_licensed == 3 ~ viol_mjr3 / 3
+                              ,yrs_licensed == 4 ~ viol_mjr4 / 4
+                              ,yrs_licensed >= 5 ~ viol_mjr5 / 5
+                              ,TRUE ~ 0)
+    ,avg_clms_flt = case_when(yrs_licensed == 1 ~ clms_flt1_new
+                              ,yrs_licensed == 2 ~ clms_flt2 / 2
+                              ,yrs_licensed == 3 ~ clms_flt3 / 3
+                              ,yrs_licensed == 4 ~ clms_flt4 / 4
+                              ,yrs_licensed >= 5 ~ clms_flt5 / 5
+                              ,TRUE ~ 0)
+    ,avg_viol_mnr = case_when(yrs_licensed == 1 ~ viol_mnr1
+                              ,yrs_licensed == 2 ~ viol_mnr2 / 2
+                              ,yrs_licensed == 3 ~ viol_mnr3 / 3
+                              ,yrs_licensed == 4 ~ viol_mnr4 / 4
+                              ,yrs_licensed >= 5 ~ viol_mnr5 / 5
+                              ,TRUE ~ 0)
+    ,avg_clms_naf = case_when(yrs_licensed == 1 ~ clms_naf1
+                              ,yrs_licensed == 2 ~ clms_naf2 / 2
+                              ,yrs_licensed == 3 ~ clms_naf3 / 3
+                              ,yrs_licensed == 4 ~ clms_naf4 / 4
+                              ,yrs_licensed >= 5 ~ clms_naf5 / 5
+                              ,TRUE ~ 0)    
+    ,avg_total    = avg_maj_viol + avg_clms_flt + avg_viol_mnr + avg_clms_naf
+    ,avg_total    = coalesce(avg_total ,0)
+    )    
+}
+
+combined_data <- combined_data %>% create_indicator_cols()
+assessment_data <- assessment_data %>% create_indicator_cols()
 
 ## Plotting the fraud percentage by the # of "issues"
 ## Where issues is defined as situations where the "viol_mjr", "clms_flt", "viol_mnr" or "clms_naf" fields
@@ -801,11 +844,10 @@ combined_data <- combined_data %>%
 #     theme_fivethirtyeight()
 
 
-
 #########################################################
 ##  Model Building
 #########################################################
-## Removing the unnecessary columns
+## Removing some unnecessary columns
 remove_cols <- combined_data %>% 
   colnames() %>% 
   enframe() %>% 
@@ -816,19 +858,18 @@ remove_cols <- combined_data %>%
   pull()
 
 ## Fixing all the NA's as well
-## It would be much better to have the shadows ... but unfortunately
-## that makes the matrix to big below (i.e. cannot allocate vector of x.x Gb error)
-## Just going to move forward without them
 model_data <- combined_data %>% 
   select(-contains("id") ,-all_of(remove_cols) ,-contains("clms")
          ,-matches("^clms") ,-matches("^viol") ,-matches("^indicator")
          ,-matches("^issues") ,-num_cars_new ,-limits_numeric ,-claim_notes ,-make ,-model) %>% 
   select(fraud_ind ,everything()) %>% 
-  # bind_shadow(only_miss = TRUE) %>% ## Taking this out since many of the variables don't have any NA's at this point
+  # bind_shadow(only_miss = TRUE) %>% ## Taking this out since most variables don't have many NA's at this point
   # add_label_shadow() %>% 
   impute_median_if(is.numeric) %>%
   impute_median_if(is.factor) %>%
   impute_median_if(is.Date)
+
+## There are no NA's in the assessment data
 
 ## Going to create a scaled version of the data as this will impact the lasso regression penalty term
 numeric_cols <- model_data %>% 
@@ -852,46 +893,13 @@ y <- scaled_model_data$fraud_ind
 cv_lasso <- cv.glmnet(x[train ,]
                       ,y[train]
                       ,alpha = 1 
-                      ,family = binomial
-)
-
-## Outputting the model so can just read it in from here
-# saveRDS(cv_lasso ,file = "cv_lasso.RDS")
-# cv_lasso <- readRDS("cv_lasso.RDS")
+                      ,family = binomial)
 
 ## Getting the best lambda value
 best_lasso_lamba <- cv_lasso$lambda.min
 
 ## Getting predictions on the testing data
 lasso_preds <- predict(cv_lasso ,s = best_lasso_lamba ,newx = x[-train ,] ,type = "response")
-
-## Clearing up space
-rm(x)
-rm(y)
-
-## Want to see the coefficients for the lasso model
-# lasso_model <- glmnet(x[train ,]
-#                       ,y[train]
-#                       ,alpha = 1 
-#                       ,family = binomial
-#                       ,lambda = best_lasso_lamba
-#                       )
-# 
-# coef(lasso_model)[ ,"s0"] %>% 
-#   enframe() %>% 
-#   mutate(abs_value = abs(value)) %>% 
-#   arrange(desc(abs_value)) %>% 
-#   View()
-
-## Going to create a confusion matrix
-# model_data %>% 
-#   slice(-train) %>% 
-#   mutate(lasso_preds = as.numeric(test_lasso_pred[ ,"s1"] > 0.25) %>% factor(levels = c(1 ,0))
-#          ,fraud_ind  = fraud_ind %>% factor(levels = c(1 ,0))) %$% 
-#   table(fraud_ind ,lasso_preds) %>% 
-#   confusionMatrix()
-
-## Sensitivity = 36% which is greater than the 25% requirement
 
 ## Converting the fraud_ind to a factor so that the randomForest runs a classification and not a regression
 ## Removing day of week b/c it was causing issues below due to being an ordinal variable 
@@ -907,9 +915,7 @@ rf_mod <- randomForest(fraud_ind ~ .
                        ,data = rf_model_data[train ,]
                        ,xtest = rf_model_data[-train ,-1]
                        ,ytest = rf_model_data[-train ,]$fraud_ind
-                       ,importance = TRUE
-)
-
+                       ,importance = TRUE)
 
 ## Random forest predictions for testing dataset
 rf_preds <- rf_mod$test$votes[,"1"]
@@ -936,40 +942,421 @@ set.seed(741995)
 ## Creating a boosted classification model
 boost_model <- gbm(fraud_ind ~ .
                    ,data = gbm_model_data[train ,]
-                   ,distribution = "bernoulli"
-                   ,n.trees = 5000
-                   ,interaction.depth = 4
-)
+                   ,distribution = "bernoulli")
 
 ## Looking at the results
 # summary(boost_model)
 
 ## Getting the boosted predictions
-boost_preds <- predict(boost_model ,newdata = gbm_model_data[-train ,-1] ,type = "response" ,n.trees = 5000)
+boost_preds <- predict(boost_model ,newdata = gbm_model_data[-train ,-1] ,type = "response" ,n.trees = 100)
 
 
 #########################################################
-##  Model Analysis
+##  Model Comparison & Improvements
 #########################################################
 ## Plotting all of the AUC's to understand which initial model is performing best
 plot.roc(combined_data[-train ,]$fraud_ind ,lasso_preds[ ,"s1"] ,print.auc = TRUE ,percent = TRUE ,asp = NA)
 plot.roc(combined_data[-train ,]$fraud_ind ,rf_preds ,print.auc = TRUE ,percent = TRUE ,asp = NA)
 plot.roc(combined_data[-train ,]$fraud_ind ,boost_preds ,print.auc = TRUE ,percent = TRUE ,asp = NA)
 
+## Given the performance of the models decided to go with the lasso 
+## Want to see the coefficients for the lasso model
+coef(cv_lasso)
+
+## Going to iterate on the lasso model by removing the variables that are unnecessary
+scaled_model_data2 <- scaled_model_data %>% 
+  select(fraud_ind ,claimamount ,age ,yrs_licensed ,triple_exclamation ,fraud_note_ind ,num_drivers_new ,late_90d_new
+         ,outs_bal_new ,time_bet10pm2am_new ,report_lag_new ,education_new ,total_issues ,avg_maj_viol
+         ,avg_total)
+
+## Transforming into a matrix
+x2 <- model.matrix(fraud_ind ~ . ,scaled_model_data2)[ ,-1]
+
+## Building a second model iteration with only the variables of interest
+lasso_model2 <- glmnet(x2[train ,]
+                       ,y[train]
+                       ,alpha = 1 
+                       ,family = binomial
+                       ,lambda = best_lasso_lamba)
+
+## Getting predictions on the testing data
+lasso_preds2 <- predict(lasso_model2 ,newx = x2[-train ,] ,type = "response")
+
+## ROC performance decreased slightly but not by much
+## Prefer to have the simpler model with less fields
+plot.roc(combined_data[-train ,]$fraud_ind ,lasso_preds2[,"s0"] ,print.auc = TRUE ,percent = TRUE ,asp = NA)
+
+## Going to look at the actual vs predicted for various fields to see where there is room for improvement
+plot_ave_buckets <- function(x ,y = 10) {
+  combined_data %>%
+    slice(-train) %>% 
+    mutate(test_preds = lasso_preds2
+           ,bucket =cut_number(!!sym(x) ,n = y ,dig.lab=10)) %>% 
+    group_by(bucket) %>% 
+    summarise(n          = n()
+              ,fraud_ind = sum(fraud_ind)
+              ,fraud_pct = fraud_ind / n
+              ,pred_fraud_pct = mean(test_preds)
+              ) %>% 
+    ungroup() %>% 
+    select(bucket ,contains("fraud_pct")) %>% 
+    pivot_longer(-bucket) %>% 
+    mutate(actual_or_predicted = if_else(str_detect(name ,pattern = "pred") ,"Predicted" ,"Actual")) %>% 
+    ggplot(aes(x = bucket ,y = value ,color = actual_or_predicted ,group = actual_or_predicted)) +
+    geom_line() +
+    labs(col = "Actual vs Predicted") +
+    theme_fivethirtyeight()
+}
 
 
-length(lasso_preds)
-length(rf_preds)
-length(boost_preds)
+plot_ave_all_levels <- function(x) {
+  combined_data %>%
+    slice(-train) %>% 
+    mutate(test_preds = lasso_preds2) %>% 
+    group_by(!!sym(x)) %>% 
+    summarise(n          = n()
+              ,fraud_ind = sum(fraud_ind)
+              ,fraud_pct = fraud_ind / n
+              ,pred_fraud_pct = mean(test_preds)
+              ) %>% 
+    ungroup() %>% 
+    select(!!sym(x) ,contains("fraud_pct")) %>% 
+    pivot_longer(-!!sym(x)) %>% 
+    mutate(actual_or_predicted = if_else(str_detect(name ,pattern = "pred") ,"Predicted" ,"Actual")) %>% 
+    ggplot(aes(x = !!sym(x) ,y = value ,color = actual_or_predicted ,group = actual_or_predicted)) +
+    geom_line() +
+    labs(col = "Actual vs Predicted") +
+    theme_fivethirtyeight()
+}
 
+## Checking the variables in the model
+# plot_ave_buckets("claimamount") ## Fits poorly --> should log transform and see if that works better
+# plot_ave_buckets("age") ## Seems to fit the data pretty well
+# plot_ave_buckets("yrs_licensed") ## Seems to fit the data pretty well
+# plot_ave_all_levels("yrs_licensed") ## Also captures the spike in the tail
+# plot_ave_all_levels("triple_exclamation") ## Seems to fit the data pretty well
+# plot_ave_all_levels("fraud_note_ind") ## Seems to fit the data pretty well 
+# plot_ave_all_levels("num_drivers_new") ## Seems to fit the data pretty well; a little sporadic in tail
+# plot_ave_buckets("late_90d_new" ,5) ## Seems to fit the data pretty well
+# plot_ave_all_levels("outs_bal_new") ## Seems to fit the data pretty well; a little sporadic in tail
+# plot_ave_buckets("time_bet10pm2am_new") ## Fits somewhat poorly
+# plot_ave_all_levels("time_bet10pm2am_new") ## Fits somewhat poorly
+# plot_ave_all_levels("report_lag_new") ## Seems to fit the data pretty well; a little sporadic in tail
+# plot_ave_all_levels("education_new") ## Seems to fit the data pretty well
+# plot_ave_all_levels("total_issues") ## Seems to fit the data pretty well
+# plot_ave_all_levels("avg_maj_viol") ## Fits somewhat poorly
+# plot_ave_all_levels("avg_total") ## Fits somewhat poorly
 
+## Checking a few variables outside the model
+# plot_ave_all_levels("claim_greater_than_limit") # Good 
+# plot_ave_all_levels("hp_vehicle") # Noisy
+# plot_ave_all_levels("policy_tenure") # Noisy in tail
+# plot_ave_all_levels("marital_status_new") # Good
+# plot_ave_all_levels("clms_flt1_new") # Noisy in tail but good overall
+# plot_ave_all_levels("note_type") # Good
+# plot_ave_all_levels("credit_score_new") # Good
+# plot_ave_all_levels("acc_day") # Noisy but good
+# plot_ave_all_levels("pedestrian_type") # Good (graph is zoomed in a lot)
 
-## Confusion matrix
-rf_model_data %>% 
+## After looking at the AvE's going to try to improve the fit on the amount of the claim
+scaled_model_data3 <- model_data %>% 
+  mutate(log_claimamount    = log(claimamount + 1) %>% scale()
+         ,zero_dollar_claim = as.numeric(claimamount == 0) %>% as.factor()
+         ) %>% 
+  mutate_at(all_of(numeric_cols) ,function(x) {scale(x)[,1]}) %>% 
+  select(fraud_ind ,log_claimamount ,zero_dollar_claim ,age ,yrs_licensed ,triple_exclamation ,fraud_note_ind ,num_drivers_new ,late_90d_new
+         ,outs_bal_new ,time_bet10pm2am_new ,report_lag_new ,education_new ,total_issues ,avg_maj_viol
+         ,avg_total)
+
+## Transforming into a matrix
+x3 <- model.matrix(fraud_ind ~ . ,scaled_model_data3)[ ,-1]
+
+## Building a third iteration with log claim amounts
+cv_lasso2 <- cv.glmnet(x3[train ,]
+                       ,y[train]
+                       ,alpha = 1 
+                       ,family = binomial)
+
+## Getting the best lambda value of this new model (should be similar to before)
+best_lasso_lamba2 <- cv_lasso2$lambda.min
+
+## Getting predictions on the testing data
+lasso_preds3 <- predict(cv_lasso2 ,s = best_lasso_lamba2 ,newx = x3[-train ,] ,type = "response")
+
+## Plotting the ROC - AUC still 71.5%
+plot.roc(combined_data[-train ,]$fraud_ind ,lasso_preds3[,"s1"] ,print.auc = TRUE ,percent = TRUE ,asp = NA)
+
+## But the new predictions show a significantly better fit by claim amount buckets
+combined_data %>%
   slice(-train) %>% 
-  mutate(rf_preds = as.numeric(test_rf_pred[ ,1] > 0.25) %>% factor(levels = c(1 ,0))) %$% 
+  mutate(test_preds      = lasso_preds2
+         ,test_preds_new = lasso_preds3
+         ,bucket         = cut_number(!!sym("claimamount") ,n = 10 ,dig.lab=10)) %>% 
+  group_by(bucket) %>% 
+  summarise(n          = n()
+            ,fraud_ind = sum(fraud_ind)
+            ,fraud_pct = fraud_ind / n
+            ,pred_fraud_pct = mean(test_preds)
+            ,new_pred_fraud_pct = mean(test_preds_new)
+            ) %>% 
+  ungroup() %>% 
+  select(bucket ,contains("fraud_pct")) %>% 
+  pivot_longer(-bucket) %>% 
+  mutate(actual_or_predicted = if_else(str_detect(name ,pattern = "new_pred") 
+                                       ,"New Predicted" 
+                                       ,if_else(str_detect(name ,pattern = "pred")
+                                                ,"Old Predicted"
+                                                ,"Actual"
+                                                )
+                                       )
+         ) %>% 
+  ggplot(aes(x = bucket ,y = value ,color = actual_or_predicted ,group = actual_or_predicted)) +
+  geom_line() +
+  labs(col = "Actual vs Predicted") +
+  theme_fivethirtyeight()
+
+## Confusion Matrix 
+## 0.25 cut-off chosen based off business input of wanting at least 1 in 4 claims to be fraudulent
+## This is going to lead to a sensitivity > 25% but they want it to be "at least" so okay to have more
+combined_data %>% 
+  slice(-train) %>% 
+  mutate(lasso_preds   = as.numeric(lasso_preds3[ ,"s1"] > 0.25) %>% factor(levels = c(1 ,0))
+         ,fraud_ind = factor(fraud_ind ,levels = c(1 ,0))
+         ) %$% 
   table(fraud_ind ,lasso_preds) %>% 
   confusionMatrix()
+
+## Looking at the betas/variable importance
+coef(cv_lasso2)[,"s1"] %>% 
+  enframe() %>% 
+  mutate(abs_beta = abs(value)) %>% 
+  filter(name != "(Intercept)") %>% 
+  arrange(desc(abs_beta)) %>% 
+  slice(1:10) %>% 
+  ggplot(aes(x = reorder(name ,abs_beta) ,y = value)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  theme_fivethirtyeight()
+
+
+#########################################################
+## Assessment data clean up
+#########################################################
+## Adjusting the assessment data columns which have NA's
+## Getting the numeric NA columns here
+assessment_numeric_na_cols <- assessment_data %>% 
+  mutate(log_claimamount    = log(claimamount + 1)
+         ,zero_dollar_claim = as.numeric(claimamount == 0)) %>% 
+  select(log_claimamount ,zero_dollar_claim ,age ,yrs_licensed ,triple_exclamation ,fraud_note_ind ,num_drivers_new ,late_90d_new
+         ,outs_bal_new ,time_bet10pm2am_new ,report_lag_new ,education_new ,total_issues ,avg_maj_viol
+         ,avg_total) %>% # selecting only the columns required by the model
+  select_if(is.numeric) %>% 
+  summarise_all(~ sum(is.na(.))) %>% 
+  mutate(id = 1) %>% 
+  pivot_longer(-id) %>% 
+  filter(value != 0) %>% 
+  select(name) %>% 
+  pull()
+
+## Getting the factor NA columns here
+assessment_factor_na_cols <- assessment_data %>% 
+  mutate(log_claimamount    = log(claimamount + 1)
+         ,zero_dollar_claim = as.numeric(claimamount == 0)) %>% 
+  select(log_claimamount ,zero_dollar_claim ,age ,yrs_licensed ,triple_exclamation ,fraud_note_ind ,num_drivers_new ,late_90d_new
+         ,outs_bal_new ,time_bet10pm2am_new ,report_lag_new ,education_new ,total_issues ,avg_maj_viol
+         ,avg_total) %>% # selecting only the columns required by the model
+  select_if(is.factor) %>% 
+  summarise_all(~ sum(is.na(.))) %>% 
+  mutate(id = 1) %>% 
+  pivot_longer(-id) %>% 
+  filter(value != 0) %>% 
+  select(name) %>% 
+  pull()
+
+## Getting the median from the training data
+median_numeric_training_data <- combined_data %>% 
+  slice(train) %>% 
+  mutate(log_claimamount    = log(claimamount + 1)
+         ,zero_dollar_claim = as.numeric(claimamount == 0)) %>% 
+  summarise_at(.vars = assessment_numeric_na_cols 
+               ,~ median(. ,na.rm = TRUE))
+
+## Looking at education_new since that is the factor column that is missing values
+median_factor_training_data <- combined_data %>% 
+  count(education_new) %>% 
+  arrange(desc(n)) %>% 
+  slice(1)
+
+## Imputing this on the assessment data
+assessment_data <- assessment_data %>% 
+  mutate(log_claimamount    = log(claimamount + 1) %>% coalesce(median_numeric_training_data$log_claimamount)
+         ,zero_dollar_claim = as.numeric(claimamount == 0) %>% coalesce(0)
+         ,age               = age %>% coalesce(median_numeric_training_data$age)
+         ,yrs_licensed      = yrs_licensed %>% coalesce(median_numeric_training_data$yrs_licensed)
+         ,num_drivers_new   = num_drivers_new %>% coalesce(median_numeric_training_data$num_drivers_new)
+         ,late_90d_new      = late_90d_new %>% coalesce(median_numeric_training_data$late_90d_new)
+         ,outs_bal_new      = outs_bal_new %>% coalesce(median_numeric_training_data$outs_bal_new)
+         ,total_issues      = total_issues %>% coalesce(median_numeric_training_data$total_issues)
+         ,education_new     = education_new %>% coalesce(median_factor_training_data$education_new)
+  ) %>% 
+  select(log_claimamount ,zero_dollar_claim ,age ,yrs_licensed ,triple_exclamation ,fraud_note_ind ,num_drivers_new ,late_90d_new
+         ,outs_bal_new ,time_bet10pm2am_new ,report_lag_new ,education_new ,total_issues ,avg_maj_viol
+         ,avg_total)
+
+## Scaling the assessment data as well
+numeric_assessment_cols <- assessment_data %>% 
+  select_if(is.numeric) %>% 
+  colnames()
+
+## Getting the means for scaling
+mean_training_data <- model_data %>%
+  mutate(log_claimamount    = log(claimamount + 1)
+         ,zero_dollar_claim = as.numeric(claimamount == 0)) %>%   
+  select(all_of(numeric_assessment_cols)) %>% 
+  summarise_all(~ mean(. ,na.rm = TRUE))
+
+## Getting the std deviations for scaling
+sd_training_data <- model_data %>%
+  mutate(log_claimamount    = log(claimamount + 1)
+         ,zero_dollar_claim = as.numeric(claimamount == 0)) %>%   
+  select(all_of(numeric_assessment_cols)) %>% 
+  summarise_all(~ sd(. ,na.rm = TRUE))
+
+
+## Scaling the assessment data to match what was done on the original data
+assessment_data <- assessment_data %>% 
+  mutate(log_claimamount      = (log_claimamount - mean_training_data$log_claimamount) /sd_training_data$log_claimamount
+         ,zero_dollar_claim   = zero_dollar_claim %>% as.factor()
+         ,age                 = (age - mean_training_data$age) /sd_training_data$age
+         ,yrs_licensed        = (yrs_licensed - mean_training_data$yrs_licensed) /sd_training_data$yrs_licensed
+         ,num_drivers_new     = (num_drivers_new - mean_training_data$num_drivers_new) /sd_training_data$num_drivers_new
+         ,late_90d_new        = (late_90d_new - mean_training_data$late_90d_new) /sd_training_data$late_90d_new
+         ,outs_bal_new        = (outs_bal_new - mean_training_data$outs_bal_new) /sd_training_data$outs_bal_new
+         ,time_bet10pm2am_new = (time_bet10pm2am_new - mean_training_data$time_bet10pm2am_new) /sd_training_data$time_bet10pm2am_new
+         ,report_lag_new      = (report_lag_new - mean_training_data$report_lag_new) /sd_training_data$report_lag_new
+         ,total_issues        = (total_issues - mean_training_data$total_issues) /sd_training_data$total_issues
+         ,avg_maj_viol        = (avg_maj_viol - mean_training_data$avg_maj_viol) /sd_training_data$avg_maj_viol
+         ,avg_total           = (avg_total - mean_training_data$avg_total) /sd_training_data$avg_total
+         )
+
+
+## Getting the same column order
+scaled_model_columns <- colnames(scaled_model_data3)
+
+## Creating a matrix
+assess_matrix_format <- assessment_data %>% 
+  mutate(fraud_ind = 1) %>% 
+  select(all_of(scaled_model_columns))
+
+assess_matrix <- model.matrix(fraud_ind ~ . ,assess_matrix_format)[ ,-1]
+
+## Checking that the distributions are the same as before
+percent_of_total <- function(x ,y) {
+  x %>% 
+    group_by(!!sym(y)) %>% 
+    summarise(n = n()) %>% 
+    ungroup() %>% 
+    mutate(n_tot  = sum(n)
+           ,n_pct = n / n_tot) %>% 
+    select(-n_tot)
+}
+
+percent_of_total_bucket <- function(x ,y ,z = 5) {
+  x %>% 
+    mutate(band = cut_number(!!sym(y) ,n = z ,dig.lab=10)) %>% 
+    group_by(band) %>% 
+    summarise(n = n()) %>% 
+    ungroup() %>% 
+    mutate(n_tot  = sum(n)
+           ,n_pct = n / n_tot) %>% 
+    select(-n_tot)
+}
+
+## Almost the same as before
+percent_of_total_bucket(assess_matrix_format ,"log_claimamount")
+percent_of_total_bucket(scaled_model_data3 ,"log_claimamount")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"zero_dollar_claim")
+percent_of_total(scaled_model_data3 ,"zero_dollar_claim")
+
+## Almost the same as before
+percent_of_total_bucket(assess_matrix_format ,"age")
+percent_of_total_bucket(scaled_model_data3 ,"age")
+
+## Almost the same as before
+percent_of_total_bucket(assess_matrix_format ,"yrs_licensed")
+percent_of_total_bucket(scaled_model_data3 ,"yrs_licensed")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"triple_exclamation")
+percent_of_total(scaled_model_data3 ,"triple_exclamation")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"fraud_note_ind")
+percent_of_total(scaled_model_data3 ,"fraud_note_ind")
+
+## Almost the same as before
+percent_of_total_bucket(assess_matrix_format ,"num_drivers_new" ,2)
+percent_of_total_bucket(scaled_model_data3 ,"num_drivers_new" ,2)
+
+## Almost the same as before
+percent_of_total_bucket(assess_matrix_format ,"late_90d_new")
+percent_of_total_bucket(scaled_model_data3 ,"late_90d_new")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"outs_bal_new")
+percent_of_total(scaled_model_data3 ,"outs_bal_new")
+
+## Almost the same as before
+percent_of_total_bucket(assess_matrix_format ,"time_bet10pm2am_new")
+percent_of_total_bucket(scaled_model_data3 ,"time_bet10pm2am_new")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"report_lag_new")
+percent_of_total(scaled_model_data3 ,"report_lag_new")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"education_new")
+percent_of_total(scaled_model_data3 ,"education_new")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"total_issues")
+percent_of_total(scaled_model_data3 ,"total_issues")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"avg_maj_viol")
+percent_of_total(scaled_model_data3 ,"avg_maj_viol")
+
+## Almost the same as before
+percent_of_total(assess_matrix_format ,"avg_total")
+percent_of_total(scaled_model_data3 ,"avg_total")
+
+## Given that the distribution of every single variable is similar to that used in the training dataset
+## Using the model on this new validation data still seems appropriate
+## It should have similar levels of predictiveness as what was seen in the testing dataset
+
+
+#########################################################
+## Final output
+#########################################################
+## Getting the predictions
+final_preds <- predict(cv_lasso2 ,s = best_lasso_lamba2 ,newx = assess_matrix ,type = "response")
+
+## Looking at the total fraud_pct
+mean(final_preds)
+
+## Joining these predictions back to the original assessment data
+final_assessment_data <- raw_assessment_data %>% 
+  mutate(probability = final_preds[,"s1"]
+         ,prediction = as.numeric(final_preds > 0.25)
+         )
+
+## Outputting the results
+final_assessment_data %>% 
+  select(claim_id ,prediction ,probability) %>% 
+  write_xlsx("Scored Results.xlsx")
+
 
 
 
